@@ -718,6 +718,7 @@ update_places (NautilusGtkPlacesSidebar *sidebar)
              _("Open Network Locations"));
   g_object_unref (start_icon);
 
+
   /* Trash */
   if (sidebar->show_trash)
     {
@@ -1070,11 +1071,21 @@ update_places (NautilusGtkPlacesSidebar *sidebar)
       g_free (mount_uri);
       g_free (tooltip);
     }
+  
 
 
   g_list_free_full (network_volumes, g_object_unref);
   g_list_free_full (network_mounts, g_object_unref);
 
+  /* Root view */
+  start_icon = g_themed_icon_new_with_default_fallbacks ("drive-harddisk-symbolic");
+  add_place (sidebar, NAUTILUS_GTK_PLACES_BUILT_IN,
+             NAUTILUS_GTK_PLACES_SECTION_SYSTEM,
+             _("Root"), start_icon, NULL, "file:///",
+             NULL, NULL, NULL, NULL, 0,
+             _("Open Root Directory"));
+  g_object_unref (start_icon);
+  
   /* We want this hidden by default, but need to do it after the show_all call */
   nautilus_gtk_sidebar_row_hide (NAUTILUS_GTK_SIDEBAR_ROW (sidebar->new_bookmark_row), TRUE);
 
