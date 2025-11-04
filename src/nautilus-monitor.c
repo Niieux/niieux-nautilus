@@ -83,6 +83,14 @@ dir_changed (GFileMonitor      *monitor,
              GFileMonitorEvent  event_type,
              gpointer           user_data)
 {
+    char *to_uri;
+
+    to_uri = NULL;
+    if (other_file)
+    {
+        to_uri = g_file_get_uri (other_file);
+    }
+
     switch (event_type)
     {
         default:
@@ -116,39 +124,9 @@ dir_changed (GFileMonitor      *monitor,
             nautilus_file_changes_queue_file_added (child);
         }
         break;
-
-        case G_FILE_MONITOR_EVENT_MOVED_IN:
-        {
-            if (other_file != NULL)
-            {
-                nautilus_file_changes_queue_file_moved (other_file, child);
-            }
-            else
-            {
-                nautilus_file_changes_queue_file_added (child);
-            }
-        }
-        break;
-
-        case G_FILE_MONITOR_EVENT_MOVED_OUT:
-        {
-            if (other_file != NULL)
-            {
-                nautilus_file_changes_queue_file_moved (child, other_file);
-            }
-            else
-            {
-                nautilus_file_changes_queue_file_removed (child);
-            }
-        }
-        break;
-
-        case G_FILE_MONITOR_EVENT_RENAMED:
-        {
-            nautilus_file_changes_queue_file_moved (child, other_file);
-        }
-        break;
     }
+
+    g_free (to_uri);
 
     schedule_call_consume_changes ();
 }
@@ -160,9 +138,7 @@ nautilus_monitor_directory (GFile *location)
     NautilusMonitor *ret;
 
     ret = g_slice_new0 (NautilusMonitor);
-    dir_monitor = g_file_monitor_directory (location,
-                                            G_FILE_MONITOR_WATCH_MOUNTS | G_FILE_MONITOR_WATCH_MOVES,
-                                            NULL, NULL);
+    dir_monitor = g_file_monitor_directory (location, G_FILE_MONITOR_WATCH_MOUNTS, NULL, NULL);
 
     if (dir_monitor != NULL)
     {

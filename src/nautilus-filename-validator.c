@@ -4,13 +4,10 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-#include "nautilus-filename-validator.h"
-
-#include "nautilus-directory.h"
-#include "nautilus-file.h"
-#include "nautilus-file-utilities.h"
-
 #include <glib/gi18n.h>
+
+#include "nautilus-filename-validator.h"
+#include "nautilus-file-utilities.h"
 
 #define FILE_NAME_DUPLICATED_LABEL_TIMEOUT 500
 
@@ -129,7 +126,7 @@ nautilus_filename_validator_name_is_valid (NautilusFilenameValidator  *self,
     {
         is_valid = FALSE;
     }
-    else if (strchr (name, '/') != NULL)
+    else if (strstr (name, "/") != NULL)
     {
         is_valid = FALSE;
         *error_message = is_folder ? _("Folder names cannot contain “/”") :

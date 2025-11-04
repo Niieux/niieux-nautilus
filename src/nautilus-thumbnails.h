@@ -21,11 +21,8 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
 #include <gdk-pixbuf/gdk-pixbuf.h>
-
-guint      nautilus_thumbnail_get_max_size          (void);
+#include "nautilus-file.h"
 
 /* Returns NULL if there's no thumbnail yet. */
 void       nautilus_create_thumbnail                (NautilusFile *file);

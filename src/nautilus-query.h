@@ -21,21 +21,35 @@
 
 #pragma once
 
-#include "nautilus-enums.h"
-
-#include <glib.h>
 #include <glib-object.h>
 #include <gio/gio.h>
+
+typedef enum {
+        NAUTILUS_QUERY_SEARCH_TYPE_LAST_ACCESS,
+        NAUTILUS_QUERY_SEARCH_TYPE_LAST_MODIFIED,
+        NAUTILUS_QUERY_SEARCH_TYPE_CREATED
+} NautilusQuerySearchType;
+
+typedef enum {
+        NAUTILUS_QUERY_SEARCH_CONTENT_SIMPLE,
+        NAUTILUS_QUERY_SEARCH_CONTENT_FULL_TEXT,
+} NautilusQuerySearchContent;
+
+typedef enum {
+        NAUTILUS_QUERY_RECURSIVE_NEVER,
+        NAUTILUS_QUERY_RECURSIVE_ALWAYS,
+        NAUTILUS_QUERY_RECURSIVE_LOCAL_ONLY,
+        NAUTILUS_QUERY_RECURSIVE_INDEXED_ONLY,
+} NautilusQueryRecursive;
 
 #define NAUTILUS_TYPE_QUERY		(nautilus_query_get_type ())
 
 G_DECLARE_FINAL_TYPE (NautilusQuery, nautilus_query, NAUTILUS, QUERY, GObject)
 
 NautilusQuery* nautilus_query_new      (void);
-NautilusQuery* nautilus_query_copy     (NautilusQuery *query);
 
 char *         nautilus_query_get_text           (NautilusQuery *query);
-gboolean       nautilus_query_set_text           (NautilusQuery *query, const char *text);
+void           nautilus_query_set_text           (NautilusQuery *query, const char *text);
 
 gboolean       nautilus_query_get_show_hidden_files (NautilusQuery *query);
 void           nautilus_query_set_show_hidden_files (NautilusQuery *query, gboolean show_hidden);
@@ -47,30 +61,30 @@ void           nautilus_query_set_location       (NautilusQuery *query,
 GPtrArray *    nautilus_query_get_mime_types     (NautilusQuery *query);
 void           nautilus_query_set_mime_types     (NautilusQuery *query, GPtrArray *mime_types);
 
-gboolean
-nautilus_query_can_search_content (NautilusQuery *self);
-gboolean
-nautilus_query_get_search_content (NautilusQuery *query);
-gboolean
-nautilus_query_update_search_content (NautilusQuery *self);
+NautilusQuerySearchContent nautilus_query_get_search_content (NautilusQuery *query);
+void                       nautilus_query_set_search_content (NautilusQuery              *query,
+                                                              NautilusQuerySearchContent  content);
 
-NautilusSearchTimeType nautilus_query_get_search_type (NautilusQuery *query);
-void                   nautilus_query_set_search_type (NautilusQuery           *query,
-                                                       NautilusSearchTimeType   type);
+NautilusQuerySearchType nautilus_query_get_search_type (NautilusQuery *query);
+void                    nautilus_query_set_search_type (NautilusQuery           *query,
+                                                        NautilusQuerySearchType  type);
 
 GPtrArray*     nautilus_query_get_date_range     (NautilusQuery *query);
 void           nautilus_query_set_date_range     (NautilusQuery *query,
                                                   GPtrArray     *date_range);
 
-gboolean
-nautilus_query_recursive (NautilusQuery *self);
-gboolean
-nautilus_query_recursive_local_only (NautilusQuery *self);
-gboolean
-nautilus_query_update_recursive_setting (NautilusQuery *self);
+NautilusQueryRecursive nautilus_query_get_recursive (NautilusQuery *query);
+void                   nautilus_query_set_recursive (NautilusQuery          *query,
+                                                     NautilusQueryRecursive  recursive);
+
+gboolean       nautilus_query_get_searching      (NautilusQuery *query);
+
+void           nautilus_query_set_searching      (NautilusQuery *query,
+                                                  gboolean       searching);
 
 gdouble        nautilus_query_matches_string     (NautilusQuery *query, const gchar *string);
 
-gboolean       nautilus_query_has_active_filter  (NautilusQuery *query);
+char *         nautilus_query_to_readable_string (NautilusQuery *query);
+
 gboolean       nautilus_query_is_empty           (NautilusQuery *query);
 gboolean       nautilus_query_is_global          (NautilusQuery *query);

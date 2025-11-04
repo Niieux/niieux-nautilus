@@ -69,6 +69,11 @@
         <attribute name="hidden-when">action-disabled</attribute>
       </item>
       <item>
+        <attribute name="label" translatable="yes">Edit _Location</attribute>
+        <attribute name="action">toolbar.edit-location</attribute>
+        <attribute name="accel">&lt;control&gt;L</attribute>
+      </item>
+      <item>
         <attribute name="label" translatable="yes">_Copy Location</attribute>
         <attribute name="action">view.copy-current-location</attribute>
       </item>
@@ -76,21 +81,6 @@
         <attribute name="label" translatable="yes">_Open in File Manager</attribute>
         <attribute name="action">view.open-current-directory-with-files</attribute>
         <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-    </section>
-    <section>
-      <item>
-        <attribute name="label" translatable="yes">_Paste</attribute>
-        <attribute name="action">view.paste</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">Paste as Lin_k</attribute>
-        <attribute name="action">view.create-link</attribute>
-        <attribute name="hidden-when">action-disabled</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">Select _All</attribute>
-        <attribute name="action">view.select-all</attribute>
       </item>
     </section>
     <section id="background-extensions-section"/>

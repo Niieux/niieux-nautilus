@@ -18,10 +18,9 @@
 
 #include "nautilus-batch-rename-dialog.h"
 #include "nautilus-batch-rename-utilities.h"
-#include "nautilus-directory.h"
 #include "nautilus-file.h"
 #include "nautilus-filename-utilities.h"
-#include "nautilus-localsearch-utilities.h"
+#include "nautilus-tracker-utilities.h"
 
 #include <glib.h>
 #include <gtk/gtk.h>
@@ -39,7 +38,7 @@ typedef struct
     NautilusBatchRenameDialog *dialog;
     GHashTable *date_order_hash_table;
 
-    GHashTable *selection_metadata;
+    GList *selection_metadata;
 
     gboolean has_metadata[G_N_ELEMENTS (metadata_tags_constants)];
 
@@ -50,6 +49,12 @@ enum
 {
     FILE_NAME_INDEX,
     CREATION_DATE_INDEX,
+    YEAR_INDEX,
+    MONTH_INDEX,
+    DAY_INDEX,
+    HOURS_INDEX,
+    MINUTES_INDEX,
+    SECONDS_INDEX,
     CAMERA_MODEL_INDEX,
     SEASON_INDEX,
     EPISODE_NUMBER_INDEX,
@@ -57,7 +62,6 @@ enum
     ARTIST_NAME_INDEX,
     TITLE_INDEX,
     ALBUM_NAME_INDEX,
-    URL_INDEX,
 } QueryMetadata;
 
 static void on_cursor_callback (GObject      *object,
@@ -82,88 +86,258 @@ conflict_data_free (gpointer mem)
     g_free (conflict_data);
 }
 
-static void
-file_metadata_free (gpointer data)
+gchar *
+batch_rename_get_tag_text_representation (TagConstants tag_constants)
 {
-    FileMetadata *file_metadata = data;
+    return g_strdup_printf ("[%s]", gettext (tag_constants.label));
+}
 
-    for (guint i = 0; i < G_N_ELEMENTS (file_metadata->metadata); i++)
+static GString *
+batch_rename_replace (gchar *string,
+                      gchar *substring,
+                      gchar *replacement)
+{
+    GString *new_string;
+    gchar **splitted_string;
+    gint i, n_splits;
+
+    new_string = g_string_new ("");
+
+    if (substring == NULL || replacement == NULL)
     {
-        if (file_metadata->metadata[i] != NULL)
+        g_string_append (new_string, string);
+
+        return new_string;
+    }
+
+    if (g_utf8_strlen (substring, -1) == 0)
+    {
+        g_string_append (new_string, string);
+
+        return new_string;
+    }
+
+    splitted_string = g_strsplit (string, substring, -1);
+    if (splitted_string == NULL)
+    {
+        g_string_append (new_string, string);
+
+        return new_string;
+    }
+
+    n_splits = g_strv_length (splitted_string);
+
+    for (i = 0; i < n_splits; i++)
+    {
+        g_string_append (new_string, splitted_string[i]);
+
+        if (i != n_splits - 1)
         {
-            g_string_free (file_metadata->metadata[i], TRUE);
+            g_string_append (new_string, replacement);
         }
     }
 
-    g_free (file_metadata);
+    g_strfreev (splitted_string);
+
+    return new_string;
 }
 
-const gchar *
-batch_rename_get_tag_text_representation (TagConstants tag_constants)
+void
+batch_rename_sort_lists_for_rename (GList    **selection,
+                                    GList    **new_names,
+                                    GList    **old_names,
+                                    GList    **new_files,
+                                    GList    **old_files,
+                                    gboolean   is_undo_redo)
 {
-    static GHashTable *tag_text_hash;
+    GList *new_names_list;
+    GList *new_names_list2;
+    GList *files;
+    GList *files2;
+    GList *old_names_list = NULL;
+    GList *new_files_list = NULL;
+    GList *old_files_list = NULL;
+    GList *old_names_list2 = NULL;
+    GList *new_files_list2 = NULL;
+    GList *old_files_list2 = NULL;
+    GString *new_file_name;
+    GString *new_name;
+    GString *old_name;
+    GFile *new_file;
+    GFile *old_file;
+    NautilusFile *file;
+    gboolean order_changed = TRUE;
 
-    if (G_UNLIKELY (tag_text_hash == NULL))
+    /* in the following case:
+     * file1 -> file2
+     * file2 -> file3
+     * file2 must be renamed first, so because of that, the list has to be reordered
+     */
+    while (order_changed)
     {
-        tag_text_hash = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, g_free);
+        order_changed = FALSE;
+
+        if (is_undo_redo)
+        {
+            old_names_list = *old_names;
+            new_files_list = *new_files;
+            old_files_list = *old_files;
+        }
+
+        for (new_names_list = *new_names, files = *selection;
+             new_names_list != NULL && files != NULL;
+             new_names_list = new_names_list->next, files = files->next)
+        {
+            g_autoptr (NautilusFile) parent = NULL;
+
+            new_file_name = new_names_list->data;
+            parent = nautilus_file_get_parent (NAUTILUS_FILE (files->data));
+
+            if (is_undo_redo)
+            {
+                old_names_list2 = old_names_list;
+                new_files_list2 = new_files_list;
+                old_files_list2 = old_files_list;
+            }
+
+            for (files2 = files, new_names_list2 = new_names_list;
+                 files2 != NULL && new_names_list2 != NULL;
+                 files2 = files2->next, new_names_list2 = new_names_list2->next)
+            {
+                const char *file_name;
+                g_autoptr (NautilusFile) parent2 = NULL;
+
+                file_name = nautilus_file_get_name (NAUTILUS_FILE (files2->data));
+                new_name = new_names_list2->data;
+
+                parent2 = nautilus_file_get_parent (NAUTILUS_FILE (files2->data));
+
+                if (files2 != files && g_strcmp0 (file_name, new_file_name->str) == 0 &&
+                    parent == parent2)
+                {
+                    file = NAUTILUS_FILE (files2->data);
+
+                    *selection = g_list_remove_link (*selection, files2);
+                    *new_names = g_list_remove_link (*new_names, new_names_list2);
+
+                    *selection = g_list_prepend (*selection, file);
+                    *new_names = g_list_prepend (*new_names, new_name);
+
+                    if (is_undo_redo)
+                    {
+                        old_name = old_names_list2->data;
+                        new_file = new_files_list2->data;
+                        old_file = old_files_list2->data;
+
+                        *old_names = g_list_remove_link (*old_names, old_names_list2);
+                        *new_files = g_list_remove_link (*new_files, new_files_list2);
+                        *old_files = g_list_remove_link (*old_files, old_files_list2);
+
+                        *old_names = g_list_prepend (*old_names, old_name);
+                        *new_files = g_list_prepend (*new_files, new_file);
+                        *old_files = g_list_prepend (*old_files, old_file);
+                    }
+
+                    order_changed = TRUE;
+                    break;
+                }
+
+                if (is_undo_redo)
+                {
+                    old_names_list2 = old_names_list2->next;
+                    new_files_list2 = new_files_list2->next;
+                    old_files_list2 = old_files_list2->next;
+                }
+            }
+
+            if (is_undo_redo)
+            {
+                old_names_list = old_names_list->next;
+                new_files_list = new_files_list->next;
+                old_files_list = old_files_list->next;
+            }
+        }
     }
-
-    const gchar *tag_text = g_hash_table_lookup (tag_text_hash, tag_constants.label);
-    if (G_UNLIKELY (tag_text == NULL))
-    {
-        tag_text = g_strdup_printf ("[%s]", gettext (tag_constants.label));
-
-        g_hash_table_insert (tag_text_hash,
-                             (gpointer) tag_constants.label,
-                             (gpointer) tag_text);
-    }
-
-    return tag_text;
 }
 
+/* This function changes the background color of the replaced part of the name */
 GString *
-markup_hightlight_text (const char  *label,
-                        const gchar *substring,
-                        const gchar *text_color,
-                        const gchar *background_color)
+batch_rename_replace_label_text (const char  *label,
+                                 const gchar *substring)
 {
-    g_autoptr (GString) new_label = g_string_new_take (g_markup_escape_text (label, -1));
+    GString *new_label;
+    gchar **splitted_string;
+    gchar *token;
+    gint i, n_splits;
 
-    if (substring == NULL || *substring == '\0')
+    new_label = g_string_new ("");
+
+    if (substring == NULL || g_strcmp0 (substring, "") == 0)
     {
-        return g_steal_pointer (&new_label);
+        token = g_markup_escape_text (label, -1);
+        new_label = g_string_append (new_label, token);
+        g_free (token);
+
+        return new_label;
     }
 
-    g_autofree gchar *escaped_substring = g_markup_escape_text (substring, -1);
-    g_autofree gchar *highlighted_string = g_strdup_printf ("<span background='%s' color='%s'>%s</span>",
-                                                            background_color, text_color,
-                                                            escaped_substring);
+    splitted_string = g_strsplit (label, substring, -1);
+    if (splitted_string == NULL)
+    {
+        token = g_markup_escape_text (label, -1);
+        new_label = g_string_append (new_label, token);
+        g_free (token);
 
-    g_string_replace (new_label, escaped_substring, highlighted_string, -1);
+        return new_label;
+    }
 
-    return g_steal_pointer (&new_label);
+    n_splits = g_strv_length (splitted_string);
+
+    for (i = 0; i < n_splits; i++)
+    {
+        token = g_markup_escape_text (splitted_string[i], -1);
+        new_label = g_string_append (new_label, token);
+
+        g_free (token);
+
+        if (i != n_splits - 1)
+        {
+            token = g_markup_escape_text (substring, -1);
+            g_string_append_printf (new_label,
+                                    "<span background=\'#f57900\' color='white'>%s</span>",
+                                    token);
+
+            g_free (token);
+        }
+    }
+
+    g_strfreev (splitted_string);
+
+    return new_label;
 }
 
 static gchar *
-get_metadata (GHashTable   *selection_metadata,
-              NautilusFile *file,
+get_metadata (GList        *selection_metadata,
+              const char   *file_name,
               MetadataType  metadata_type)
 {
-    if (selection_metadata == NULL)
-    {
-        /* We did not start collecting metadata yet */
-        return NULL;
-    }
-
-    FileMetadata *file_metadata = g_hash_table_lookup (selection_metadata,
-                                                       file);
+    GList *l;
+    FileMetadata *file_metadata;
     gchar *metadata = NULL;
 
-    if (file_metadata != NULL &&
-        file_metadata->metadata[metadata_type] != NULL &&
-        file_metadata->metadata[metadata_type]->len > 0)
+    for (l = selection_metadata; l != NULL; l = l->next)
     {
-        metadata = file_metadata->metadata[metadata_type]->str;
+        file_metadata = l->data;
+        if (g_strcmp0 (file_name, file_metadata->file_name->str) == 0)
+        {
+            if (file_metadata->metadata[metadata_type] &&
+                file_metadata->metadata[metadata_type]->len > 0)
+            {
+                metadata = file_metadata->metadata[metadata_type]->str;
+            }
+
+            break;
+        }
     }
 
     return metadata;
@@ -172,7 +346,7 @@ get_metadata (GHashTable   *selection_metadata,
 static GString *
 batch_rename_format (NautilusFile *file,
                      GList        *text_chunks,
-                     GHashTable   *selection_metadata,
+                     GList        *selection_metadata,
                      gint          count)
 {
     GList *l;
@@ -193,7 +367,7 @@ batch_rename_format (NautilusFile *file,
 
         for (guint i = 0; i < G_N_ELEMENTS (numbering_tags_constants); i++)
         {
-            const gchar *tag_text_representation;
+            g_autofree gchar *tag_text_representation = NULL;
 
             tag_text_representation = batch_rename_get_tag_text_representation (numbering_tags_constants[i]);
             if (g_strcmp0 (tag_string->str, tag_text_representation) == 0)
@@ -237,13 +411,13 @@ batch_rename_format (NautilusFile *file,
 
         for (guint i = 0; i < G_N_ELEMENTS (metadata_tags_constants); i++)
         {
-            const gchar *tag_text_representation;
+            g_autofree gchar *tag_text_representation = NULL;
 
             tag_text_representation = batch_rename_get_tag_text_representation (metadata_tags_constants[i]);
             if (g_strcmp0 (tag_string->str, tag_text_representation) == 0)
             {
                 metadata_type = metadata_tags_constants[i].metadata_type;
-                metadata = get_metadata (selection_metadata, file, metadata_type);
+                metadata = get_metadata (selection_metadata, file_name, metadata_type);
 
                 /* TODO: This is a hack, we should provide a cancellable for checking
                  * the metadata, and if that is happening don't enter here. We can
@@ -316,12 +490,13 @@ GList *
 batch_rename_dialog_get_new_names_list (NautilusBatchRenameDialogMode  mode,
                                         GList                         *selection,
                                         GList                         *text_chunks,
-                                        GHashTable                    *selection_metadata,
+                                        GList                         *selection_metadata,
                                         gchar                         *entry_text,
                                         gchar                         *replace_text)
 {
     GList *l;
     GList *result;
+    GString *file_name;
     GString *new_name;
     gint count;
 
@@ -331,6 +506,9 @@ batch_rename_dialog_get_new_names_list (NautilusBatchRenameDialogMode  mode,
     for (l = selection; l != NULL; l = l->next)
     {
         NautilusFile *file = NAUTILUS_FILE (l->data);
+        const char *name = nautilus_file_get_name (file);
+
+        file_name = g_string_new (name);
 
         /* get the new name here and add it to the list*/
         if (mode == NAUTILUS_BATCH_RENAME_DIALOG_FORMAT)
@@ -344,12 +522,13 @@ batch_rename_dialog_get_new_names_list (NautilusBatchRenameDialogMode  mode,
 
         if (mode == NAUTILUS_BATCH_RENAME_DIALOG_REPLACE)
         {
-            new_name = g_string_new (nautilus_file_get_name (file));
-
-            g_string_replace (new_name, entry_text, replace_text, -1);
-
+            new_name = batch_rename_replace (file_name->str,
+                                             entry_text,
+                                             replace_text);
             result = g_list_prepend (result, new_name);
         }
+
+        g_string_free (file_name, TRUE);
     }
 
     return result;
@@ -372,28 +551,21 @@ file_name_conflicts_with_results (GList   *selection,
     {
         NautilusFile *selection_file = NAUTILUS_FILE (l1->data);
         const char *name1 = nautilus_file_get_name (selection_file);
+        g_autofree gchar *selection_parent_uri = NULL;
+
+        selection_parent_uri = nautilus_file_get_parent_uri (selection_file);
 
         if (g_strcmp0 (name1, old_name->str) == 0)
         {
             new_name = l2->data;
 
             /* if the name didn't change, then there's a conflict */
-            if (g_string_equal (old_name, new_name))
+            if (g_string_equal (old_name, new_name) &&
+                (parent_uri == NULL || g_strcmp0 (parent_uri, selection_parent_uri) == 0))
             {
-                if (parent_uri == NULL)
-                {
-                    return FALSE;
-                }
-
-                g_autofree gchar *selection_parent_uri = NULL;
-
-                selection_parent_uri = nautilus_file_get_parent_uri (selection_file);
-
-                if (g_strcmp0 (parent_uri, selection_parent_uri) == 0)
-                {
-                    return FALSE;
-                }
+                return FALSE;
             }
+
 
             /* if this file exists and it changed it's name, then there's no
              * conflict */
@@ -497,9 +669,9 @@ nautilus_batch_rename_dialog_sort (GList      *selection,
                                    SortMode    mode,
                                    GHashTable *creation_date_table)
 {
-    g_return_val_if_fail (selection != NULL, NULL);
-
-    GList *l;
+    GList *l, *l2;
+    GList *create_date_list;
+    GList *create_date_list_sorted;
 
     if (mode == ORIGINAL_ASCENDING)
     {
@@ -523,35 +695,38 @@ nautilus_batch_rename_dialog_sort (GList      *selection,
 
     if (mode == FIRST_CREATED || mode == LAST_CREATED)
     {
-        g_autoptr (GPtrArray) create_date_list = g_ptr_array_new_with_free_func (g_free);
-        guint i = 0;
+        create_date_list = NULL;
 
         for (l = selection; l != NULL; l = l->next)
         {
             NautilusFile *file = NAUTILUS_FILE (l->data);
-            g_autofree gchar *uri = nautilus_file_get_uri (file);
+            const char *name = nautilus_file_get_name (file);
             CreateDateElem *elem = g_new (CreateDateElem, 1);
 
             elem->file = file;
-            elem->position = GPOINTER_TO_INT (g_hash_table_lookup (creation_date_table, uri));
+            elem->position = GPOINTER_TO_INT (g_hash_table_lookup (creation_date_table, name));
 
-            g_ptr_array_add (create_date_list, elem);
+            create_date_list = g_list_prepend (create_date_list, elem);
         }
 
         if (mode == FIRST_CREATED)
         {
-            g_ptr_array_sort_values (create_date_list, compare_files_by_first_created);
+            create_date_list_sorted = g_list_sort (create_date_list,
+                                                   compare_files_by_first_created);
         }
         else
         {
-            g_ptr_array_sort_values (create_date_list, compare_files_by_last_created);
+            create_date_list_sorted = g_list_sort (create_date_list,
+                                                   compare_files_by_last_created);
         }
 
-        for (l = selection, i = 0; i < create_date_list->len; l = l->next, i++)
+        for (l = selection, l2 = create_date_list_sorted; l2 != NULL; l = l->next, l2 = l2->next)
         {
-            CreateDateElem *elem = create_date_list->pdata[i];
+            CreateDateElem *elem = l2->data;
             l->data = elem->file;
         }
+
+        g_list_free_full (create_date_list, g_free);
     }
 
     return selection;
@@ -568,6 +743,45 @@ cursor_next (QueryData           *query_data,
 }
 
 static void
+remove_metadata (QueryData    *query_data,
+                 MetadataType  metadata_type)
+{
+    GList *l;
+    FileMetadata *metadata_to_delete;
+
+    for (l = query_data->selection_metadata; l != NULL; l = l->next)
+    {
+        metadata_to_delete = l->data;
+        if (metadata_to_delete->metadata[metadata_type])
+        {
+            g_string_free (metadata_to_delete->metadata[metadata_type], TRUE);
+            metadata_to_delete->metadata[metadata_type] = NULL;
+        }
+    }
+
+    query_data->has_metadata[metadata_type] = FALSE;
+}
+
+static GString *
+format_date_time (GDateTime *date_time)
+{
+    g_autofree gchar *date = NULL;
+    GString *formated_date;
+
+    date = g_date_time_format (date_time, "%x");
+    if (strstr (date, "/") != NULL)
+    {
+        formated_date = batch_rename_replace (date, "/", "-");
+    }
+    else
+    {
+        formated_date = g_string_new (date);
+    }
+
+    return formated_date;
+}
+
+static void
 on_cursor_callback (GObject      *object,
                     GAsyncResult *result,
                     gpointer      user_data)
@@ -577,12 +791,19 @@ on_cursor_callback (GObject      *object,
     QueryData *query_data;
     MetadataType metadata_type;
     g_autoptr (GError) error = NULL;
+    GList *l;
     FileMetadata *file_metadata;
+    GDateTime *date_time;
     guint i;
-    gconstpointer current_metadata;
-    const gchar *file_uri;
+    const gchar *current_metadata;
     const gchar *file_name;
-    g_autoptr (GDateTime) creation_datetime = NULL;
+    const gchar *creation_date;
+    const gchar *year;
+    const gchar *month;
+    const gchar *day;
+    const gchar *hours;
+    const gchar *minutes;
+    const gchar *seconds;
     const gchar *equipment;
     const gchar *season_number;
     const gchar *episode_number;
@@ -590,7 +811,6 @@ on_cursor_callback (GObject      *object,
     const gchar *artist_name;
     const gchar *title;
     const gchar *album_name;
-    NautilusFile *file;
 
     file_metadata = NULL;
 
@@ -613,8 +833,7 @@ on_cursor_callback (GObject      *object,
         {
             nautilus_batch_rename_dialog_query_finished (query_data->dialog,
                                                          query_data->date_order_hash_table,
-                                                         query_data->selection_metadata,
-                                                         query_data->has_metadata);
+                                                         query_data->selection_metadata);
         }
 
         g_free (query_data);
@@ -622,23 +841,14 @@ on_cursor_callback (GObject      *object,
         return;
     }
 
-    /* Search for the metadata object corresponding to the file */
-    file_uri = tracker_sparql_cursor_get_string (cursor, URL_INDEX, NULL);
-    file = nautilus_file_get_by_uri (file_uri);
+    creation_date = tracker_sparql_cursor_get_string (cursor, CREATION_DATE_INDEX, NULL);
 
-    file_metadata = g_hash_table_lookup (query_data->selection_metadata, file);
-    if (G_UNLIKELY (file_metadata == NULL))
-    {
-        g_warning ("Got a file that was not in the list of requested files");
-        cursor_next (query_data, cursor);
-
-        return;
-    }
-
-    if (tracker_sparql_cursor_get_value_type (cursor, CREATION_DATE_INDEX) == TRACKER_SPARQL_VALUE_TYPE_DATETIME)
-    {
-        creation_datetime = tracker_sparql_cursor_get_datetime (cursor, CREATION_DATE_INDEX);
-    }
+    year = tracker_sparql_cursor_get_string (cursor, YEAR_INDEX, NULL);
+    month = tracker_sparql_cursor_get_string (cursor, MONTH_INDEX, NULL);
+    day = tracker_sparql_cursor_get_string (cursor, DAY_INDEX, NULL);
+    hours = tracker_sparql_cursor_get_string (cursor, HOURS_INDEX, NULL);
+    minutes = tracker_sparql_cursor_get_string (cursor, MINUTES_INDEX, NULL);
+    seconds = tracker_sparql_cursor_get_string (cursor, SECONDS_INDEX, NULL);
     equipment = tracker_sparql_cursor_get_string (cursor, CAMERA_MODEL_INDEX, NULL);
     season_number = tracker_sparql_cursor_get_string (cursor, SEASON_INDEX, NULL);
     episode_number = tracker_sparql_cursor_get_string (cursor, EPISODE_NUMBER_INDEX, NULL);
@@ -646,115 +856,124 @@ on_cursor_callback (GObject      *object,
     artist_name = tracker_sparql_cursor_get_string (cursor, ARTIST_NAME_INDEX, NULL);
     title = tracker_sparql_cursor_get_string (cursor, TITLE_INDEX, NULL);
     album_name = tracker_sparql_cursor_get_string (cursor, ALBUM_NAME_INDEX, NULL);
+
+    /* Search for the metadata object corresponding to the file name */
     file_name = tracker_sparql_cursor_get_string (cursor, FILE_NAME_INDEX, NULL);
+    for (l = query_data->selection_metadata; l != NULL; l = l->next)
+    {
+        file_metadata = l->data;
+
+        if (g_strcmp0 (file_name, file_metadata->file_name->str) == 0)
+        {
+            break;
+        }
+    }
 
     /* Set metadata when available, and delete for the whole selection when not */
     for (i = 0; i < G_N_ELEMENTS (metadata_tags_constants); i++)
     {
-        if (!query_data->has_metadata[i])
+        if (query_data->has_metadata[i])
         {
-            continue;
-        }
-
-        metadata_type = metadata_tags_constants[i].metadata_type;
-        current_metadata = NULL;
-        switch (metadata_type)
-        {
-            case ORIGINAL_FILE_NAME:
+            metadata_type = metadata_tags_constants[i].metadata_type;
+            current_metadata = NULL;
+            switch (metadata_type)
             {
-                current_metadata = file_name;
+                case ORIGINAL_FILE_NAME:
+                {
+                    current_metadata = file_name;
+                }
+                break;
+
+                case CREATION_DATE:
+                {
+                    current_metadata = creation_date;
+                }
+                break;
+
+                case EQUIPMENT:
+                {
+                    current_metadata = equipment;
+                }
+                break;
+
+                case SEASON_NUMBER:
+                {
+                    current_metadata = season_number;
+                }
+                break;
+
+                case EPISODE_NUMBER:
+                {
+                    current_metadata = episode_number;
+                }
+                break;
+
+                case ARTIST_NAME:
+                {
+                    current_metadata = artist_name;
+                }
+                break;
+
+                case ALBUM_NAME:
+                {
+                    current_metadata = album_name;
+                }
+                break;
+
+                case TITLE:
+                {
+                    current_metadata = title;
+                }
+                break;
+
+                case TRACK_NUMBER:
+                {
+                    current_metadata = track_number;
+                }
+                break;
+
+                default:
+                {
+                    g_warn_if_reached ();
+                }
+                break;
             }
-            break;
 
-            case CREATION_DATE:
+            if (!current_metadata)
             {
-                current_metadata = creation_datetime;
-            }
-            break;
+                remove_metadata (query_data,
+                                 metadata_type);
 
-            case EQUIPMENT:
-            {
-                current_metadata = equipment;
-            }
-            break;
-
-            case SEASON_NUMBER:
-            {
-                current_metadata = season_number;
-            }
-            break;
-
-            case EPISODE_NUMBER:
-            {
-                current_metadata = episode_number;
-            }
-            break;
-
-            case ARTIST_NAME:
-            {
-                current_metadata = artist_name;
-            }
-            break;
-
-            case ALBUM_NAME:
-            {
-                current_metadata = album_name;
-            }
-            break;
-
-            case TITLE:
-            {
-                current_metadata = title;
-            }
-            break;
-
-            case TRACK_NUMBER:
-            {
-                current_metadata = track_number;
-            }
-            break;
-
-            default:
-            {
-                g_warn_if_reached ();
-            }
-            break;
-        }
-
-        if (!current_metadata)
-        {
-            query_data->has_metadata[i] = FALSE;
-
-            if (metadata_type == CREATION_DATE &&
-                query_data->date_order_hash_table)
-            {
-                g_hash_table_destroy (query_data->date_order_hash_table);
-                query_data->date_order_hash_table = NULL;
-            }
-        }
-        else
-        {
-            if (metadata_type == CREATION_DATE)
-            {
-                /* Add the sort order to the order hash table */
-                g_hash_table_insert (query_data->date_order_hash_table,
-                                     g_strdup (file_uri),
-                                     GINT_TO_POINTER (g_hash_table_size (query_data->date_order_hash_table)));
-
-                file_metadata->metadata[metadata_type] =
-                    g_string_new_take (g_date_time_format (creation_datetime, "%F"));
+                if (metadata_type == CREATION_DATE &&
+                    query_data->date_order_hash_table)
+                {
+                    g_hash_table_destroy (query_data->date_order_hash_table);
+                    query_data->date_order_hash_table = NULL;
+                }
             }
             else
             {
-                if (file_metadata->metadata[metadata_type] != NULL)
+                if (metadata_type == CREATION_DATE)
                 {
-                    g_warning ("File %s has metadata type number %u being set but it already exists.",
-                               file_uri, metadata_type);
-                    g_string_free (file_metadata->metadata[metadata_type], TRUE);
-                }
+                    /* Add the sort order to the order hash table */
+                    g_hash_table_insert (query_data->date_order_hash_table,
+                                         g_strdup (tracker_sparql_cursor_get_string (cursor, 0, NULL)),
+                                         GINT_TO_POINTER (g_hash_table_size (query_data->date_order_hash_table)));
 
-                file_metadata->metadata[metadata_type] = g_string_new (current_metadata);
-                g_string_replace (file_metadata->metadata[metadata_type], "/", "_", 0);
+                    date_time = g_date_time_new_local (atoi (year),
+                                                       atoi (month),
+                                                       atoi (day),
+                                                       atoi (hours),
+                                                       atoi (minutes),
+                                                       atoi (seconds));
+
+                    file_metadata->metadata[metadata_type] = format_date_time (date_time);
+                }
+                else
+                {
+                    file_metadata->metadata[metadata_type] = g_string_new (current_metadata);
+                    g_string_replace (file_metadata->metadata[metadata_type], "/", "_", 0);
+                }
             }
         }
     }
@@ -789,8 +1008,7 @@ batch_rename_dialog_query_callback (GObject      *object,
         {
             nautilus_batch_rename_dialog_query_finished (query_data->dialog,
                                                          query_data->date_order_hash_table,
-                                                         query_data->selection_metadata,
-                                                         query_data->has_metadata);
+                                                         query_data->selection_metadata);
         }
 
         g_free (query_data);
@@ -812,12 +1030,12 @@ check_metadata_for_selection (NautilusBatchRenameDialog *dialog,
     GError *error;
     QueryData *query_data;
     FileMetadata *file_metadata;
-    g_autoptr (GHashTable) selection_metadata = NULL;
+    GList *selection_metadata;
     guint i;
     g_autofree gchar *parent_uri = NULL;
     gchar *file_name_escaped;
 
-    connection = nautilus_localsearch_get_miner_fs_connection (&error);
+    connection = nautilus_tracker_get_miner_fs_connection (&error);
     if (!connection)
     {
         if (error)
@@ -830,20 +1048,24 @@ check_metadata_for_selection (NautilusBatchRenameDialog *dialog,
     }
 
     error = NULL;
-    selection_metadata = g_hash_table_new_full (NULL, NULL,
-                                                (GDestroyNotify) nautilus_file_unref, file_metadata_free);
+    selection_metadata = NULL;
 
-    query = g_string_new ("SELECT DISTINCT "
+    query = g_string_new ("SELECT "
                           "nfo:fileName(?file) "
                           "nie:contentCreated(?content) "
+                          "year(nie:contentCreated(?content)) "
+                          "month(nie:contentCreated(?content)) "
+                          "day(nie:contentCreated(?content)) "
+                          "hours(nie:contentCreated(?content)) "
+                          "minutes(nie:contentCreated(?content)) "
+                          "seconds(nie:contentCreated(?content)) "
                           "nfo:model(nfo:equipment(?content)) "
                           "nmm:seasonNumber(?content) "
                           "nmm:episodeNumber(?content) "
                           "nmm:trackNumber(?content) "
-                          "nmm:artistName(nmm:artist(?content)) "
+                          "nmm:artistName(nmm:performer(?content)) "
                           "nie:title(?content) "
                           "nie:title(nmm:musicAlbum(?content)) "
-                          "nie:url(?file) "
                           "WHERE { ?file a nfo:FileDataObject. ?file nie:url ?url. ?content nie:isStoredAs ?file. ");
 
     parent_uri = nautilus_file_get_parent_uri (NAUTILUS_FILE (selection->data));
@@ -854,8 +1076,7 @@ check_metadata_for_selection (NautilusBatchRenameDialog *dialog,
 
     for (l = selection; l != NULL; l = l->next)
     {
-        NautilusFile *file = NAUTILUS_FILE (l->data);
-        const char *file_name = nautilus_file_get_name (file);
+        const char *file_name = nautilus_file_get_name (NAUTILUS_FILE (l->data));
         file_name_escaped = tracker_sparql_escape_string (file_name);
 
         if (l == selection)
@@ -878,13 +1099,15 @@ check_metadata_for_selection (NautilusBatchRenameDialog *dialog,
         }
 
         file_metadata = g_new0 (FileMetadata, 1);
-        file_metadata->file = file;
+        file_metadata->file_name = g_string_new (file_name);
+        file_metadata->metadata[ORIGINAL_FILE_NAME] = g_string_new (file_name);
 
-        g_hash_table_insert (selection_metadata,
-                             nautilus_file_ref (file), file_metadata);
+        selection_metadata = g_list_prepend (selection_metadata, file_metadata);
 
         g_free (file_name_escaped);
     }
+
+    selection_metadata = g_list_reverse (selection_metadata);
 
     g_string_append (query, "} ORDER BY ASC(nie:contentCreated(?content))");
 
@@ -894,7 +1117,7 @@ check_metadata_for_selection (NautilusBatchRenameDialog *dialog,
                                                                (GDestroyNotify) g_free,
                                                                NULL);
     query_data->dialog = dialog;
-    query_data->selection_metadata = g_steal_pointer (&selection_metadata);
+    query_data->selection_metadata = selection_metadata;
     for (i = 0; i < G_N_ELEMENTS (metadata_tags_constants); i++)
     {
         query_data->has_metadata[i] = TRUE;
@@ -916,16 +1139,20 @@ batch_rename_files_get_distinct_parents (GList *selection)
     GList *l1;
     NautilusFile *file;
     NautilusDirectory *directory;
+    NautilusFile *parent;
 
     result = NULL;
     for (l1 = selection; l1 != NULL; l1 = l1->next)
     {
         file = NAUTILUS_FILE (l1->data);
-        directory = nautilus_file_get_directory (file);
+        parent = nautilus_file_get_parent (file);
+        directory = nautilus_directory_get_for_file (parent);
         if (!g_list_find (result, directory))
         {
-            result = g_list_prepend (result, nautilus_directory_ref (directory));
+            result = g_list_prepend (result, directory);
         }
+
+        nautilus_file_unref (parent);
     }
 
     return result;

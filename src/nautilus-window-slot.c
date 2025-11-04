@@ -27,18 +27,16 @@
 #include "nautilus-application.h"
 #include "nautilus-bookmark.h"
 #include "nautilus-bookmark-list.h"
-#include "nautilus-directory.h"
 #include "nautilus-enum-types.h"
 #include "nautilus-fd-holder.h"
 #include "nautilus-files-view.h"
 #include "nautilus-location-banner.h"
 #include "nautilus-mime-actions.h"
-#include "nautilus-query.h"
 #include "nautilus-query-editor.h"
 #include "nautilus-scheme.h"
 #include "nautilus-tag-manager.h"
 #include "nautilus-toolbar.h"
-#include "nautilus-view-info.h"
+#include "nautilus-view.h"
 #include "nautilus-x-content-bar.h"
 
 #include <glib/gi18n.h>
@@ -108,7 +106,7 @@ struct _NautilusWindowSlot
     NautilusFdHolder *fd_holder;
 
     /* Viewed file */
-    NautilusFilesView *content_view;
+    NautilusView *content_view;
     NautilusFile *viewed_file;
     gboolean viewed_file_seen;
     gboolean viewed_file_in_trash;
@@ -140,7 +138,7 @@ struct _NautilusWindowSlot
     GFile *pending_location;
     NautilusLocationChangeType location_change_type;
     guint location_change_distance;
-    NautilusFileList *pending_selection;
+    GList *pending_selection;
     NautilusFile *pending_file_to_activate;
     NautilusFile *determine_view_file;
     GCancellable *mount_cancellable;
@@ -157,7 +155,7 @@ struct _NautilusWindowSlot
     GBinding *selection_binding;
     GBinding *extensions_background_menu_binding;
     GBinding *templates_menu_binding;
-    NautilusFileList *selection;
+    GList *selection;
 };
 
 G_DEFINE_TYPE (NautilusWindowSlot, nautilus_window_slot, ADW_TYPE_BIN);
@@ -224,6 +222,7 @@ nautilus_window_slot_get_navigation_state (NautilusWindowSlot *self)
     NautilusNavigationState *data;
     GList *back_list;
     GList *forward_list;
+    NautilusView *view = nautilus_window_slot_get_current_view (self);
 
     if (self->location == NULL)
     {
@@ -246,7 +245,7 @@ nautilus_window_slot_get_navigation_state (NautilusWindowSlot *self)
     data->back_list = back_list;
     data->forward_list = forward_list;
     g_set_object (&data->current_location_bookmark, self->current_location_bookmark);
-    g_set_object (&data->current_search_query, nautilus_files_view_get_search_query (self->content_view));
+    g_set_object (&data->current_search_query, nautilus_view_get_search_query (view));
 
     return data;
 }
@@ -255,14 +254,16 @@ static void
 nautilus_window_slot_set_view_id (NautilusWindowSlot *self,
                                   guint               view_id)
 {
-    g_return_if_fail (NAUTILUS_IS_FILES_VIEW (self->content_view));
+    NautilusView *view = nautilus_window_slot_get_current_view (self);
 
-    if (nautilus_files_view_get_view_id (self->content_view) == view_id)
+    g_return_if_fail (NAUTILUS_IS_FILES_VIEW (view));
+
+    if (nautilus_view_get_view_id (self->content_view) == view_id)
     {
         return;
     }
 
-    nautilus_files_view_change (self->content_view, view_id);
+    nautilus_files_view_change (NAUTILUS_FILES_VIEW (view), view_id);
 
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_ICON_NAME]);
     g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_TOOLBAR_MENU_SECTIONS]);
@@ -277,7 +278,7 @@ nautilus_window_slot_get_view_id_for_location (NautilusWindowSlot *self,
 
     if (self->content_view != NULL)
     {
-        NautilusQuery *query = nautilus_files_view_get_search_query (self->content_view);
+        NautilusQuery *query = nautilus_view_get_search_query (self->content_view);
 
         if (query != NULL)
         {
@@ -301,11 +302,13 @@ nautilus_window_slot_get_view_id_for_location (NautilusWindowSlot *self,
 static void
 update_search_visible (NautilusWindowSlot *self)
 {
+    NautilusView *view = nautilus_window_slot_get_current_view (self);
+
     /* If we changed location just to another search location, for example,
      * when changing the query, just keep the search visible.
      * Make sure the search is visible though, since we could be returning
      * from a previous search location when using the history */
-    if (nautilus_files_view_is_searching (self->content_view))
+    if (nautilus_view_is_searching (view))
     {
         nautilus_window_slot_set_search_visible (self, TRUE);
         return;
@@ -320,6 +323,7 @@ update_search_visible (NautilusWindowSlot *self)
 static void
 nautilus_window_slot_sync_actions (NautilusWindowSlot *self)
 {
+    NautilusView *view;
     gboolean is_network_view;
     GAction *action;
     GVariant *variant;
@@ -340,13 +344,13 @@ nautilus_window_slot_sync_actions (NautilusWindowSlot *self)
     update_search_visible (self);
 
     /* Files view mode */
-    guint view_id = nautilus_files_view_get_view_id (self->content_view);
-    is_network_view = view_id == NAUTILUS_VIEW_NETWORK_ID;
+    view = nautilus_window_slot_get_current_view (self);
+    is_network_view = nautilus_view_get_view_id (view) == NAUTILUS_VIEW_NETWORK_ID;
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "files-view-mode");
     g_simple_action_set_enabled (G_SIMPLE_ACTION (action), !is_network_view);
     if (g_action_get_enabled (action))
     {
-        variant = g_variant_new_uint32 (view_id);
+        variant = g_variant_new_uint32 (nautilus_view_get_view_id (view));
         g_action_change_state (action, variant);
     }
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "files-view-mode-toggle");
@@ -366,7 +370,10 @@ query_editor_activated_callback (NautilusQueryEditor *editor,
 {
     if (self->content_view != NULL)
     {
-        nautilus_files_view_activate_selection (self->content_view, 0);
+        if (NAUTILUS_IS_FILES_VIEW (self->content_view))
+        {
+            nautilus_files_view_activate_selection (NAUTILUS_FILES_VIEW (self->content_view), 0);
+        }
     }
 }
 
@@ -386,10 +393,12 @@ query_editor_changed_callback (NautilusQueryEditor *editor,
                                gboolean             reload,
                                NautilusWindowSlot  *self)
 {
-    nautilus_files_view_set_search_query (self->content_view, query);
+    NautilusView *view = nautilus_window_slot_get_current_view (self);
+
+    nautilus_view_set_search_query (view, query);
 
     /* Setting search query may cause the view to load a new location. */
-    GFile *location = nautilus_files_view_get_location (self->content_view);
+    GFile *location = nautilus_view_get_location (view);
     guint view_id = nautilus_window_slot_get_view_id_for_location (self, location);
 
     nautilus_window_slot_set_location (self, location);
@@ -399,13 +408,15 @@ query_editor_changed_callback (NautilusQueryEditor *editor,
 static void
 hide_query_editor (NautilusWindowSlot *self)
 {
-    NautilusFilesView *view = self->content_view;
+    NautilusView *view;
+
+    view = nautilus_window_slot_get_current_view (self);
 
     g_signal_handlers_disconnect_by_data (self->query_editor, self);
 
     nautilus_query_editor_set_query (self->query_editor, NULL);
 
-    if (nautilus_files_view_is_searching (view))
+    if (nautilus_view_is_searching (view))
     {
         g_autolist (NautilusFile) selection = NULL;
 
@@ -413,22 +424,22 @@ hide_query_editor (NautilusWindowSlot *self)
          * This allows finding a file from current folder using search, then
          * press [Esc], and have the selected search result still selected and
          * revealed in the unfiltered folder view. */
-        selection = nautilus_files_view_get_selection (view);
+        selection = nautilus_view_get_selection (view);
 
         /* Now that we have saved the search, clear the view's query. The view
          * will immediately clear its model model and load the previous location
          */
-        nautilus_files_view_set_search_query (view, NULL);
+        nautilus_view_set_search_query (view, NULL);
 
         /* The view location has changed, update the slot location. */
-        GFile *location = nautilus_files_view_get_location (view);
+        GFile *location = nautilus_view_get_location (view);
         guint view_id = nautilus_window_slot_get_view_id_for_location (self, location);
 
         nautilus_window_slot_set_location (self, location);
         nautilus_window_slot_set_view_id (self, view_id);
 
         /* Apply the saved selection */
-        nautilus_files_view_set_selection (view, selection);
+        nautilus_view_set_selection (view, selection);
     }
 
     if (nautilus_window_slot_get_active (self))
@@ -451,14 +462,19 @@ nautilus_window_slot_get_current_location (NautilusWindowSlot *self)
 static void
 show_query_editor (NautilusWindowSlot *self)
 {
-    if (self->content_view == NULL)
+    NautilusView *view;
+
+    view = nautilus_window_slot_get_current_view (self);
+    if (view == NULL)
     {
         return;
     }
 
-    if (nautilus_files_view_is_searching (self->content_view))
+    if (nautilus_view_is_searching (view))
     {
-        NautilusQuery *query = nautilus_files_view_get_search_query (self->content_view);
+        NautilusQuery *query;
+
+        query = nautilus_view_get_search_query (view);
 
         if (query != NULL)
         {
@@ -529,16 +545,19 @@ void
 nautilus_window_slot_search (NautilusWindowSlot *self,
                              NautilusQuery      *query)
 {
+    NautilusView *view;
+
     g_clear_object (&self->pending_search_query);
 
+    view = nautilus_window_slot_get_current_view (self);
     /* We could call this when the location is still being checked in the
      * window slot. For that, save the search we want to do for once we have
      * a view set up */
-    if (self->content_view != NULL)
+    if (view)
     {
         nautilus_window_slot_set_search_visible (self, TRUE);
         nautilus_query_editor_set_query (self->query_editor, query);
-        nautilus_files_view_set_search_query (self->content_view, query);
+        nautilus_view_set_search_query (view, query);
     }
     else
     {
@@ -937,7 +956,7 @@ action_open_location (GSimpleAction *action,
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
     g_autoptr (GFile) location = g_file_new_for_uri (g_variant_get_string (state, NULL));
 
-    nautilus_window_slot_open_location_full (self, location, NULL);
+    nautilus_window_slot_open_location_full (self, location, NAUTILUS_OPEN_FLAG_NORMAL, NULL);
 }
 
 static void
@@ -1006,9 +1025,10 @@ action_focus_search (GSimpleAction *action,
                      gpointer       user_data)
 {
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
+    NautilusQueryEditor *editor = nautilus_window_slot_get_query_editor (self);
 
     nautilus_window_slot_set_search_visible (self, TRUE);
-    nautilus_query_editor_select_all_text (self->query_editor);
+    nautilus_query_editor_select_all_text (editor);
 }
 
 static void
@@ -1043,7 +1063,8 @@ action_search_visible (GSimpleAction *action,
     {
         if (search_visible)
         {
-            if (self->content_view != NULL && nautilus_files_view_is_searching (self->content_view))
+            NautilusView *view = nautilus_window_slot_get_current_view (self);
+            if (view != NULL && nautilus_view_is_searching (view))
             {
                 gtk_stack_set_visible_child (GTK_STACK (self->stack), self->vbox);
             }
@@ -1071,14 +1092,14 @@ action_search_global (GSimpleAction *action,
 
         if (search_global)
         {
-            NautilusQuery *query = nautilus_files_view_get_search_query (self->content_view);
+            NautilusQuery *query = nautilus_view_get_search_query (self->content_view);
             if (query != NULL)
             {
                 nautilus_query_set_location (query, NULL);
-                nautilus_files_view_set_search_query (self->content_view, query);
+                nautilus_view_set_search_query (self->content_view, query);
 
                 /* The view location has changed, update the view id. */
-                GFile *location = nautilus_files_view_get_location (self->content_view);
+                GFile *location = nautilus_view_get_location (self->content_view);
                 guint view_id = nautilus_window_slot_get_view_id_for_location (self, location);
 
                 nautilus_window_slot_set_location (self, location);
@@ -1129,7 +1150,7 @@ action_files_view_mode_toggle (GSimpleAction *action,
         return;
     }
 
-    current_view_id = nautilus_files_view_get_view_id (self->content_view);
+    current_view_id = nautilus_view_get_view_id (self->content_view);
     if (current_view_id == NAUTILUS_VIEW_LIST_ID)
     {
         change_files_view_mode (self, NAUTILUS_VIEW_GRID_ID);
@@ -1151,7 +1172,7 @@ action_files_view_mode (GSimpleAction *action,
     view_id = g_variant_get_uint32 (value);
     self = NAUTILUS_WINDOW_SLOT (user_data);
 
-    if (!NAUTILUS_IS_FILES_VIEW (self->content_view))
+    if (!NAUTILUS_IS_FILES_VIEW (nautilus_window_slot_get_current_view (self)))
     {
         return;
     }
@@ -1188,8 +1209,9 @@ action_unbookmark_current_directory (GSimpleAction *action,
 {
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
     NautilusApplication *app = NAUTILUS_APPLICATION (g_application_get_default ());
+    g_autofree gchar *uri = nautilus_window_slot_get_location_uri (self);
 
-    nautilus_bookmark_list_remove (nautilus_application_get_bookmarks (app), self->location);
+    nautilus_bookmark_list_delete_items_with_uri (nautilus_application_get_bookmarks (app), uri);
 }
 
 static void
@@ -1200,8 +1222,8 @@ action_bookmark_current_directory (GSimpleAction *action,
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
     NautilusApplication *app = NAUTILUS_APPLICATION (g_application_get_default ());
 
-    nautilus_bookmark_list_add (nautilus_application_get_bookmarks (app),
-                                self->location, -1);
+    nautilus_bookmark_list_append (nautilus_application_get_bookmarks (app),
+                                   nautilus_window_slot_get_bookmark (self));
 }
 
 static void
@@ -1212,7 +1234,7 @@ action_star_current_directory (GSimpleAction *action,
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
 
     nautilus_tag_manager_star_files (nautilus_tag_manager_get (), G_OBJECT (self),
-                                     &(GList){ .data = self->viewed_file }, NULL, NULL, NULL);
+                                     &(GList){ .data = self->viewed_file }, NULL, NULL);
 }
 
 static void
@@ -1223,7 +1245,7 @@ action_unstar_current_directory (GSimpleAction *action,
     NautilusWindowSlot *self = NAUTILUS_WINDOW_SLOT (user_data);
 
     nautilus_tag_manager_unstar_files (nautilus_tag_manager_get (), G_OBJECT (self),
-                                       &(GList){ .data = self->viewed_file }, NULL, NULL, NULL);
+                                       &(GList){ .data = self->viewed_file }, NULL, NULL);
 }
 
 const GActionEntry slot_entries[] =
@@ -1280,8 +1302,8 @@ update_bookmark_actions (NautilusWindowSlot *self)
         NautilusApplication *app = NAUTILUS_APPLICATION (g_application_get_default ());
         NautilusBookmarkList *bookmarks = nautilus_application_get_bookmarks (app);
 
-        can_bookmark = nautilus_bookmark_list_can_bookmark (bookmarks, location);
-        can_unbookmark = nautilus_bookmark_list_contains (bookmarks, location);
+        can_bookmark = nautilus_bookmark_list_can_bookmark_location (bookmarks, location);
+        can_unbookmark = nautilus_bookmark_list_item_with_location (bookmarks, location, NULL) != NULL;
     }
 
     GAction *action_add = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group),
@@ -1408,7 +1430,7 @@ nautilus_window_slot_init (NautilusWindowSlot *self)
 static void begin_location_change (NautilusWindowSlot        *slot,
                                    GFile                     *location,
                                    GFile                     *previous_location,
-                                   NautilusFileList          *new_selection,
+                                   GList                     *new_selection,
                                    NautilusLocationChangeType type,
                                    guint                      distance);
 static void free_location_change (NautilusWindowSlot *self);
@@ -1419,7 +1441,8 @@ static void got_file_info_for_view_selection_callback (NautilusFile *file,
 void
 nautilus_window_slot_open_location_full (NautilusWindowSlot *self,
                                          GFile              *location,
-                                         NautilusFileList   *new_selection)
+                                         NautilusOpenFlags   flags,
+                                         GList              *new_selection)
 {
     GFile *old_location = nautilus_window_slot_get_location (self);
 
@@ -1429,7 +1452,7 @@ nautilus_window_slot_open_location_full (NautilusWindowSlot *self,
     {
         if (self->content_view != NULL && new_selection != NULL)
         {
-            nautilus_files_view_set_selection (self->content_view, new_selection);
+            nautilus_view_set_selection (self->content_view, new_selection);
         }
 
         return;
@@ -1439,8 +1462,8 @@ nautilus_window_slot_open_location_full (NautilusWindowSlot *self,
                            NAUTILUS_LOCATION_CHANGE_STANDARD, 0);
 }
 
-static NautilusFileList *
-check_select_old_location_containing_folder (NautilusFileList           *new_selection,
+static GList *
+check_select_old_location_containing_folder (GList                      *new_selection,
                                              NautilusLocationChangeType  type,
                                              GFile                      *location,
                                              GFile                      *previous_location)
@@ -1518,12 +1541,13 @@ save_selection_for_history (NautilusWindowSlot *self)
 {
     /* Set current_bookmark scroll pos */
     if (self->current_location_bookmark != NULL &&
-        self->content_view != NULL)
+        self->content_view != NULL &&
+        NAUTILUS_IS_FILES_VIEW (self->content_view))
     {
-        g_autolist (NautilusFile) selection = nautilus_files_view_get_selection (self->content_view);
+        g_autolist (NautilusFile) selection = nautilus_view_get_selection (NAUTILUS_VIEW (self->content_view));
         g_autoptr (GStrvBuilder) selected_uris = g_strv_builder_new ();
 
-        for (NautilusFileList *l = selection; l != NULL; l = l->next)
+        for (GList *l = selection; l != NULL; l = l->next)
         {
             NautilusFile *file = l->data;
             g_strv_builder_take (selected_uris, nautilus_file_get_uri (file));
@@ -1554,7 +1578,7 @@ static void
 begin_location_change (NautilusWindowSlot         *self,
                        GFile                      *location,
                        GFile                      *previous_location,
-                       NautilusFileList           *new_selection,
+                       GList                      *new_selection,
                        NautilusLocationChangeType  type,
                        guint                       distance)
 {
@@ -1694,7 +1718,7 @@ viewed_file_changed_callback (NautilusFile       *file,
             }
             else
             {
-                nautilus_window_slot_open_location_full (self, go_to_file, NULL);
+                nautilus_window_slot_open_location_full (self, go_to_file, 0, NULL);
             }
         }
     }
@@ -1706,14 +1730,15 @@ viewed_file_changed_callback (NautilusFile       *file,
 }
 
 static void
-nautilus_window_slot_go_home (NautilusWindowSlot *self)
+nautilus_window_slot_go_home (NautilusWindowSlot *self,
+                              NautilusOpenFlags   flags)
 {
     GFile *home;
 
     g_return_if_fail (NAUTILUS_IS_WINDOW_SLOT (self));
 
     home = g_file_new_for_path (g_get_home_dir ());
-    nautilus_window_slot_open_location_full (self, home, NULL);
+    nautilus_window_slot_open_location_full (self, home, flags, NULL);
     g_object_unref (home);
 }
 
@@ -2103,13 +2128,13 @@ got_file_info_for_view_selection_callback (NautilusFile *file,
 
             if (!nautilus_is_home_directory (location))
             {
-                nautilus_window_slot_go_home (self);
+                nautilus_window_slot_go_home (self, FALSE);
             }
             else
             {
                 /* the last fallback is to go to a known place that can't be deleted! */
                 g_autoptr (GFile) root = g_file_new_for_path ("/");
-                nautilus_window_slot_open_location_full (self, root, NULL);
+                nautilus_window_slot_open_location_full (self, root, 0, NULL);
             }
         }
         else
@@ -2145,13 +2170,14 @@ done:
 static void
 apply_pending_location_and_selection_on_view (NautilusWindowSlot *self)
 {
-    nautilus_files_view_set_location (self->content_view, self->pending_location);
-    nautilus_files_view_set_selection (self->content_view, self->pending_selection);
+    nautilus_view_set_location (self->content_view, self->pending_location);
+    nautilus_view_set_selection (self->content_view, self->pending_selection);
 
     nautilus_file_list_free (self->pending_selection);
     self->pending_selection = NULL;
 
-    if (self->pending_file_to_activate != NULL)
+    if (self->pending_file_to_activate != NULL &&
+        NAUTILUS_IS_FILES_VIEW (self->content_view))
     {
         g_autoptr (GAppInfo) app_info = NULL;
         const gchar *app_id;
@@ -2160,7 +2186,7 @@ apply_pending_location_and_selection_on_view (NautilusWindowSlot *self)
         app_id = g_app_info_get_id (app_info);
         if (g_strcmp0 (app_id, NAUTILUS_DESKTOP_ID) == 0)
         {
-            nautilus_files_view_activate_file (self->content_view,
+            nautilus_files_view_activate_file (NAUTILUS_FILES_VIEW (self->content_view),
                                                self->pending_file_to_activate, 0);
         }
     }
@@ -2213,13 +2239,15 @@ nautilus_window_slot_back_or_forward (NautilusWindowSlot *self,
     GList *list;
     guint len;
     NautilusBookmark *bookmark;
+    g_autoptr (GFile) location = NULL;
     GFile *old_location;
     g_autolist (NautilusFile) selection = NULL;
 
     if (back)
     {
         /* While searching, maybe the user means to go "back" to no search. */
-        if (nautilus_files_view_is_searching (self->content_view))
+        NautilusView *view = nautilus_window_slot_get_current_view (self);
+        if (nautilus_view_is_searching (view))
         {
             nautilus_window_slot_set_search_visible (self, FALSE);
             return;
@@ -2243,7 +2271,7 @@ nautilus_window_slot_back_or_forward (NautilusWindowSlot *self,
     }
 
     bookmark = g_list_nth_data (list, distance);
-    GFile *location = nautilus_bookmark_get_location (bookmark);
+    location = nautilus_bookmark_get_location (bookmark);
     old_location = nautilus_window_slot_get_location (self);
 
     GStrv selected_uris = nautilus_bookmark_get_selected_uris (bookmark);
@@ -2285,7 +2313,7 @@ nautilus_window_slot_force_reload (NautilusWindowSlot *self)
 
     if (self->content_view)
     {
-        selection = nautilus_files_view_get_selection (self->content_view);
+        selection = nautilus_view_get_selection (self->content_view);
     }
     begin_location_change (self, location, location, selection, NAUTILUS_LOCATION_CHANGE_RELOAD, 0);
     g_object_unref (location);
@@ -2303,7 +2331,7 @@ nautilus_window_slot_queue_reload (NautilusWindowSlot *self)
 
     if (self->pending_location != NULL
         || self->content_view == NULL
-        || nautilus_files_view_is_loading (self->content_view))
+        || nautilus_view_is_loading (self->content_view))
     {
         /* there is a reload in flight */
         self->needs_reload = TRUE;
@@ -2348,15 +2376,18 @@ nautilus_window_slot_update_bookmark (NautilusWindowSlot *self,
         GFile *bookmark_location;
         bookmark_location = nautilus_bookmark_get_location (self->current_location_bookmark);
         recreate = !g_file_equal (bookmark_location, new_location);
+        g_object_unref (bookmark_location);
     }
 
     if (recreate)
     {
+        const char *display_name = nautilus_file_get_display_name (file);
+
         /* We've changed locations, must recreate bookmark for current location. */
         g_clear_object (&self->last_location_bookmark);
         self->last_location_bookmark = self->current_location_bookmark;
 
-        self->current_location_bookmark = nautilus_bookmark_new (new_location, NULL);
+        self->current_location_bookmark = nautilus_bookmark_new (new_location, display_name);
     }
 
     g_object_unref (new_location);
@@ -2378,6 +2409,7 @@ check_bookmark_location_matches (NautilusBookmark *bookmark,
         g_free (uri);
         g_free (bookmark_uri);
     }
+    g_object_unref (bookmark_location);
 }
 
 /* Debugging function used to verify that the last_location_bookmark
@@ -2629,7 +2661,7 @@ nautilus_window_slot_update_for_new_location (NautilusWindowSlot *self)
 
 static void
 view_started_loading (NautilusWindowSlot *self,
-                      NautilusFilesView  *view)
+                      NautilusView       *view)
 {
     if (view == self->content_view)
     {
@@ -2641,7 +2673,7 @@ view_started_loading (NautilusWindowSlot *self,
 
 static void
 view_ended_loading (NautilusWindowSlot *self,
-                    NautilusFilesView  *view)
+                    NautilusView       *view)
 {
     if (view == self->content_view)
     {
@@ -2664,9 +2696,11 @@ view_is_loading_changed_cb (GObject            *object,
                             GParamSpec         *pspec,
                             NautilusWindowSlot *self)
 {
-    NautilusFilesView *view = NAUTILUS_FILES_VIEW (object);
+    NautilusView *view;
 
-    if (nautilus_files_view_is_loading (view))
+    view = NAUTILUS_VIEW (object);
+
+    if (nautilus_view_is_loading (view))
     {
         view_started_loading (self, view);
     }
@@ -2714,7 +2748,7 @@ static void
 create_and_bind_new_content_view (NautilusWindowSlot *self,
                                   guint               view_id)
 {
-    self->content_view = nautilus_files_view_new (view_id, self);
+    self->content_view = NAUTILUS_VIEW (nautilus_files_view_new (view_id, self));
 
     GtkWidget *widget = GTK_WIDGET (self->content_view);
     gtk_box_append (GTK_BOX (self->vbox), widget);
@@ -3032,32 +3066,33 @@ nautilus_window_slot_stop_loading (NautilusWindowSlot *self)
     location = nautilus_window_slot_get_location (self);
     directory = nautilus_directory_get (self->location);
 
-    if (self->content_view != NULL)
+    if (NAUTILUS_IS_FILES_VIEW (self->content_view))
     {
-        nautilus_files_view_stop_loading (self->content_view);
+        nautilus_files_view_stop_loading (NAUTILUS_FILES_VIEW (self->content_view));
     }
 
     nautilus_directory_unref (directory);
 
     if (self->pending_location != NULL &&
         location != NULL &&
-        self->content_view != NULL)
+        self->content_view != NULL &&
+        NAUTILUS_IS_FILES_VIEW (self->content_view))
     {
         /* No need to tell the new view - either it is the
          * same as the old view, in which case it will already
          * be told, or it is the very pending change we wish
          * to cancel.
          */
-        g_autolist (NautilusFile) selection = nautilus_files_view_get_selection (self->content_view);
+        g_autolist (NautilusFile) selection = nautilus_view_get_selection (self->content_view);
 
-        nautilus_files_view_set_location (self->content_view, location);
-        nautilus_files_view_set_selection (self->content_view, selection);
+        nautilus_view_set_location (self->content_view, location);
+        nautilus_view_set_selection (self->content_view, selection);
     }
 
     end_location_change (self);
 }
 
-NautilusFilesView *
+NautilusView *
 nautilus_window_slot_get_current_view (NautilusWindowSlot *self)
 {
     return self->content_view;
@@ -3092,6 +3127,7 @@ nautilus_window_slot_new (NautilusMode mode)
 const gchar *
 nautilus_window_slot_get_icon_name (NautilusWindowSlot *self)
 {
+    guint current_view_id;
     g_return_val_if_fail (NAUTILUS_IS_WINDOW_SLOT (self), NULL);
 
     if (self->content_view == NULL)
@@ -3099,12 +3135,38 @@ nautilus_window_slot_get_icon_name (NautilusWindowSlot *self)
         return "";
     }
 
-    return nautilus_files_view_get_toggle_icon_name (self->content_view);
+    current_view_id = nautilus_view_get_view_id (NAUTILUS_VIEW (self->content_view));
+    switch (current_view_id)
+    {
+        case NAUTILUS_VIEW_LIST_ID:
+        {
+            return nautilus_view_get_icon_name (NAUTILUS_VIEW_GRID_ID);
+        }
+        break;
+
+        case NAUTILUS_VIEW_GRID_ID:
+        {
+            return nautilus_view_get_icon_name (NAUTILUS_VIEW_LIST_ID);
+        }
+        break;
+
+        case NAUTILUS_VIEW_NETWORK_ID:
+        {
+            return nautilus_view_get_icon_name (NAUTILUS_VIEW_NETWORK_ID);
+        }
+        break;
+
+        default:
+        {
+            return NULL;
+        }
+    }
 }
 
 const gchar *
 nautilus_window_slot_get_tooltip (NautilusWindowSlot *self)
 {
+    guint current_view_id;
     g_return_val_if_fail (NAUTILUS_IS_WINDOW_SLOT (self), NULL);
 
     if (self->content_view == NULL)
@@ -3112,17 +3174,44 @@ nautilus_window_slot_get_tooltip (NautilusWindowSlot *self)
         return NULL;
     }
 
-    return nautilus_files_view_get_toggle_tooltip (self->content_view);
+    current_view_id = nautilus_view_get_view_id (NAUTILUS_VIEW (self->content_view));
+    switch (current_view_id)
+    {
+        case NAUTILUS_VIEW_LIST_ID:
+        {
+            return nautilus_view_get_tooltip (NAUTILUS_VIEW_GRID_ID);
+        }
+        break;
+
+        case NAUTILUS_VIEW_GRID_ID:
+        {
+            return nautilus_view_get_tooltip (NAUTILUS_VIEW_LIST_ID);
+        }
+        break;
+
+        case NAUTILUS_VIEW_NETWORK_ID:
+        {
+            return nautilus_view_get_tooltip (NAUTILUS_VIEW_NETWORK_ID);
+        }
+        break;
+
+        default:
+        {
+            return NULL;
+        }
+    }
 }
 
 NautilusToolbarMenuSections *
 nautilus_window_slot_get_toolbar_menu_sections (NautilusWindowSlot *self)
 {
+    NautilusView *view;
+
     g_return_val_if_fail (NAUTILUS_IS_WINDOW_SLOT (self), NULL);
 
-    return self->content_view != NULL
-           ? nautilus_files_view_get_toolbar_menu_sections (self->content_view)
-           : NULL;
+    view = nautilus_window_slot_get_current_view (self);
+
+    return view ? nautilus_view_get_toolbar_menu_sections (view) : NULL;
 }
 
 gboolean
@@ -3233,7 +3322,7 @@ nautilus_window_slot_go_up (NautilusWindowSlot *self)
         /* Save the down list from getting flushed by begin_location_change ()*/
         g_autolist (GFile) down_list = g_steal_pointer (&self->down_list);
 
-        nautilus_window_slot_open_location_full (self, parent, NULL);
+        nautilus_window_slot_open_location_full (self, parent, 0, NULL);
 
         down_list = g_list_prepend (down_list, g_object_ref (location));
         self->down_list = g_steal_pointer (&down_list);
@@ -3251,7 +3340,7 @@ nautilus_window_slot_go_down (NautilusWindowSlot *self)
 
     GFile *child = G_FILE (down_list->data);
 
-    nautilus_window_slot_open_location_full (self, child, NULL);
+    nautilus_window_slot_open_location_full (self, child, 0, NULL);
 
     /* Undo ref'ing done in nautilus_window_slot_go_up() */
     g_object_unref (child);

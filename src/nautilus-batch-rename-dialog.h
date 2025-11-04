@@ -18,13 +18,11 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
-#include <adwaita.h>
 #include <glib.h>
 #include <glib/gprintf.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include "nautilus-files-view.h"
 
 G_BEGIN_DECLS
 
@@ -211,24 +209,24 @@ static const TagConstants numbering_tags_constants[] =
 typedef struct
 {
     gchar *name;
-    guint index;
+    gint index;
 } ConflictData;
 
 typedef struct {
-    NautilusFile *file;
+    GString *file_name;
     GString *metadata [G_N_ELEMENTS (metadata_tags_constants)];
 } FileMetadata;
 
 #define NAUTILUS_TYPE_BATCH_RENAME_DIALOG (nautilus_batch_rename_dialog_get_type())
 
-G_DECLARE_FINAL_TYPE (NautilusBatchRenameDialog, nautilus_batch_rename_dialog, NAUTILUS, BATCH_RENAME_DIALOG, AdwDialog);
+G_DECLARE_FINAL_TYPE (NautilusBatchRenameDialog, nautilus_batch_rename_dialog, NAUTILUS, BATCH_RENAME_DIALOG, AdwWindow);
 
 GtkWidget*      nautilus_batch_rename_dialog_new                      (GList                     *selection,
+                                                                       NautilusDirectory         *directory,
                                                                        GtkRoot                   *window);
 
 void            nautilus_batch_rename_dialog_query_finished           (NautilusBatchRenameDialog *dialog,
                                                                        GHashTable                *hash_table,
-                                                                       GHashTable                *selection_metadata,
-                                                                       gboolean                   has_metadata[]);
+                                                                       GList                     *selection_metadata);
 
 G_END_DECLS

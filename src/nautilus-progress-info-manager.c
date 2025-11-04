@@ -24,8 +24,6 @@
 
 #include "nautilus-progress-info-manager.h"
 
-#include "nautilus-progress-info.h"
-
 struct _NautilusProgressInfoManager
 {
     GObject parent_instance;

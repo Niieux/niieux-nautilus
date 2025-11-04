@@ -7,12 +7,8 @@
 #include "nautilus-name-cell.h"
 
 #include "nautilus-directory.h"
-#include "nautilus-file.h"
 #include "nautilus-file-utilities.h"
-#include "nautilus-icon-info.h"
 #include "nautilus-thumbnails.h"
-#include "nautilus-ui-utilities.h"
-#include "nautilus-view-item.h"
 
 #define SPINNER_DELAY_MS 200
 
@@ -25,7 +21,6 @@ struct _NautilusNameCell
     GQuark path_attribute_q;
     GFile *file_path_base_location;
 
-    GtkWidget *top_child;
     GtkWidget *expander;
     GtkWidget *content;
     GtkWidget *fixed_height_box;
@@ -47,13 +42,19 @@ get_path_text (NautilusFile *file,
                GQuark        path_attribute_q,
                GFile        *base_location)
 {
+    g_autofree gchar *path = NULL;
+    g_autoptr (GFile) dir_location = NULL;
+    g_autoptr (GFile) home_location = g_file_new_for_path (g_get_home_dir ());
+    g_autoptr (GFile) root_location = g_file_new_for_path ("/");
+    GFile *relative_location_base;
+
     if (path_attribute_q == 0)
     {
         return NULL;
     }
 
-    g_autofree gchar *path = nautilus_file_get_string_attribute_q (file, path_attribute_q);
-    g_autoptr (GFile) dir_location = g_file_new_for_commandline_arg (path);
+    path = nautilus_file_get_string_attribute_q (file, path_attribute_q);
+    dir_location = g_file_new_for_commandline_arg (path);
 
     if (base_location != NULL && g_file_equal (base_location, dir_location))
     {
@@ -63,16 +64,12 @@ get_path_text (NautilusFile *file,
         return NULL;
     }
 
-    g_autoptr (GFile) home_location = g_file_new_for_path (g_get_home_dir ());
-
     if (g_file_equal (dir_location, home_location))
     {
         return nautilus_compute_title_for_location (home_location);
     }
 
-    g_autoptr (GFile) root_location = g_file_new_for_path ("/");
-    GFile *relative_location_base = base_location;
-
+    relative_location_base = base_location;
     if (relative_location_base == NULL)
     {
         /* Only occurs in Recent, Starred and Trash. */
@@ -121,11 +118,7 @@ update_labels (NautilusNameCell *self)
     }
 
     gtk_label_set_text (GTK_LABEL (self->path), path_text);
-    if (fts_snippet != NULL &&
-        !g_str_equal (gtk_label_get_text (self->snippet), fts_snippet))
-    {
-        gtk_label_set_markup (self->snippet, fts_snippet);
-    }
+    gtk_label_set_markup (self->snippet, fts_snippet);
 
     gtk_widget_set_visible (self->path, (path_text != NULL));
     gtk_widget_set_visible (self->snippet_button, (fts_snippet != NULL));
@@ -134,48 +127,30 @@ update_labels (NautilusNameCell *self)
 static void
 update_icon (NautilusNameCell *self)
 {
-    g_autoptr (NautilusViewItem) item = nautilus_view_cell_get_item (NAUTILUS_VIEW_CELL (self));
+    NautilusFileIconFlags flags;
+    g_autoptr (GdkPaintable) icon_paintable = NULL;
+    g_autoptr (NautilusViewItem) item = NULL;
+    NautilusFile *file;
     guint icon_size;
-    gboolean is_cut;
+    gint scale_factor;
+    int icon_height;
+    int extra_margin;
 
+    item = nautilus_view_cell_get_item (NAUTILUS_VIEW_CELL (self));
     g_return_if_fail (item != NULL);
 
+    file = nautilus_view_item_get_file (item);
     g_object_get (self, "icon-size", &icon_size, NULL);
-    g_object_get (item, "is-cut", &is_cut, NULL);
+    scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (self));
+    flags = NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS;
+
+    icon_paintable = nautilus_file_get_icon_paintable (file, icon_size, scale_factor, flags);
+    gtk_picture_set_paintable (GTK_PICTURE (self->icon), icon_paintable);
 
     /* Set the same width for all icons regardless of aspect ratio.
      * Don't set the width here because it would get GtkPicture w4h confused.
      */
     gtk_widget_set_size_request (self->fixed_height_box, icon_size, -1);
-
-    if (is_cut)
-    {
-        /* This is needed to retain a size for the icon so that we can know
-         * where to draw for cut items. */
-        GtkSnapshot *snapshot = gtk_snapshot_new ();
-        g_autoptr (GdkPaintable) paintable =
-            gtk_snapshot_free_to_paintable (snapshot,
-                                            &GRAPHENE_SIZE_INIT (icon_size, icon_size));
-
-        gtk_picture_set_paintable (GTK_PICTURE (self->icon), paintable);
-        gtk_widget_remove_css_class (self->icon, "hidden-file");
-        gtk_widget_remove_css_class (self->icon, "thumbnail");
-
-        gtk_widget_set_margin_top (self->fixed_height_box, 0);
-        gtk_widget_set_margin_bottom (self->fixed_height_box, 0);
-
-        return;
-    }
-
-    NautilusFile *file = nautilus_view_item_get_file (item);
-    gint scale_factor = gtk_widget_get_scale_factor (GTK_WIDGET (self));
-    NautilusFileIconFlags flags = NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS;
-    g_autoptr (GdkPaintable) icon_paintable = nautilus_file_get_icon_paintable (file, icon_size,
-                                                                                scale_factor, flags);
-    int icon_height;
-    float extra_margin;
-
-    gtk_picture_set_paintable (GTK_PICTURE (self->icon), icon_paintable);
 
     /* Give all items the same minimum width. This cannot be done by setting the
      * width request directly, as above, because it would get mess up with
@@ -184,11 +159,9 @@ update_icon (NautilusNameCell *self)
      * Instead we must add margins on both sides of the icon which, summed up
      * with the icon's actual width, equal the desired item width. */
     icon_height = gdk_paintable_get_intrinsic_height (icon_paintable);
-    extra_margin = (icon_size - icon_height) / 2.0;
-    /* Need to distribute margin unevenly when the required margin is
-     * fractional using ceil() and floor() since margin only accepts integers. */
-    gtk_widget_set_margin_top (self->fixed_height_box, ceil (extra_margin));
-    gtk_widget_set_margin_bottom (self->fixed_height_box, floor (extra_margin));
+    extra_margin = (icon_size - icon_height) / 2;
+    gtk_widget_set_margin_top (self->fixed_height_box, extra_margin);
+    gtk_widget_set_margin_bottom (self->fixed_height_box, extra_margin);
 
     if (icon_size >= NAUTILUS_THUMBNAIL_MINIMUM_ICON_SIZE &&
         nautilus_file_has_thumbnail (file) &&
@@ -199,15 +172,6 @@ update_icon (NautilusNameCell *self)
     else
     {
         gtk_widget_remove_css_class (self->icon, "thumbnail");
-    }
-
-    if (nautilus_file_is_hidden_file (file))
-    {
-        gtk_widget_add_css_class (self->icon, "hidden-file");
-    }
-    else
-    {
-        gtk_widget_remove_css_class (self->icon, "hidden-file");
     }
 }
 
@@ -267,7 +231,6 @@ on_icon_size_changed (NautilusNameCell *self)
     }
 
     update_icon (self);
-    gtk_widget_queue_draw (GTK_WIDGET (self));
 }
 
 static void
@@ -286,6 +249,26 @@ on_item_drag_accept_changed (NautilusNameCell *self)
     else
     {
         gtk_widget_unset_state_flags (list_row, GTK_STATE_FLAG_DROP_ACTIVE);
+    }
+}
+
+static void
+on_item_is_cut_changed (NautilusNameCell *self)
+{
+    gboolean is_cut;
+    g_autoptr (NautilusViewItem) item = NULL;
+
+    item = nautilus_view_cell_get_item (NAUTILUS_VIEW_CELL (self));
+    g_object_get (item,
+                  "is-cut", &is_cut,
+                  NULL);
+    if (is_cut)
+    {
+        gtk_widget_add_css_class (self->icon, "cut");
+    }
+    else
+    {
+        gtk_widget_remove_css_class (self->icon, "cut");
     }
 }
 
@@ -342,9 +325,8 @@ on_map_changed (GtkWidget *widget,
     NautilusFile *file = nautilus_view_item_get_file (item);
 
     if (nautilus_file_is_thumbnailing (file) ||
-        !nautilus_file_check_if_ready (file,
-                                       NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_INFO |
-                                       NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_BUFFER))
+        !nautilus_file_check_if_ready (file, NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_INFO) ||
+        !nautilus_file_check_if_ready (file, NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_BUFFER))
     {
         nautilus_view_item_prioritize (item, is_mapped);
     }
@@ -358,26 +340,6 @@ popover_show_cb (NautilusNameCell *self)
     gtk_accessible_announce (GTK_ACCESSIBLE (self),
                              label,
                              GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
-}
-
-static gboolean
-on_label_query_tooltip (GtkWidget  *widget,
-                        int         x,
-                        int         y,
-                        gboolean    keyboard_tip,
-                        GtkTooltip *tooltip,
-                        gpointer    user_data)
-{
-    GtkLabel *label = GTK_LABEL (widget);
-
-    if (pango_layout_is_ellipsized (gtk_label_get_layout (label)))
-    {
-        gtk_tooltip_set_text (tooltip, gtk_label_get_text (label));
-
-        return TRUE;
-    }
-
-    return FALSE;
 }
 
 static void
@@ -395,7 +357,7 @@ nautilus_name_cell_init (NautilusNameCell *self)
     g_signal_group_connect_swapped (self->item_signal_group, "notify::drag-accept",
                                     (GCallback) on_item_drag_accept_changed, self);
     g_signal_group_connect_swapped (self->item_signal_group, "notify::is-cut",
-                                    (GCallback) update_icon, self);
+                                    (GCallback) on_item_is_cut_changed, self);
     g_signal_group_connect_swapped (self->item_signal_group, "notify::loading",
                                     (GCallback) on_item_is_loading_changed, self);
     g_signal_group_connect_swapped (self->item_signal_group, "file-changed",
@@ -431,66 +393,6 @@ nautilus_name_cell_finalize (GObject *object)
 }
 
 static void
-snapshot (GtkWidget   *widget,
-          GtkSnapshot *snapshot)
-{
-    NautilusNameCell *self = NAUTILUS_NAME_CELL (widget);
-    g_autoptr (NautilusViewItem) item = nautilus_view_cell_get_item (NAUTILUS_VIEW_CELL (self));
-    gboolean is_cut;
-
-    g_object_get (item, "is-cut", &is_cut, NULL);
-
-    if (is_cut)
-    {
-        graphene_rect_t dash_bounds;
-
-        if (gtk_widget_compute_bounds (self->icon, widget, &dash_bounds))
-        {
-            AdwStyleManager *style_manager = adw_style_manager_get_default ();
-            gboolean is_high_contrast = adw_style_manager_get_high_contrast (style_manager);
-            guint icon_size;
-            GdkRGBA color, dashed_border_color, icon_color;
-            gboolean use_small_icon;
-            gchar *icon_name;
-            const double border_opacity = is_high_contrast ? 0.5 : 0.15;
-            const double dim_opacity = is_high_contrast ? 0.9 : 0.55;
-            graphene_rect_t icon_bounds = dash_bounds;
-
-            g_object_get (self, "icon-size", &icon_size, NULL);
-            gtk_widget_get_color (widget, &color);
-            use_small_icon = icon_size <= NAUTILUS_LIST_ICON_SIZE_MEDIUM;
-            icon_name = use_small_icon ? "cut-symbolic" : "cut-large-symbolic";
-
-            if (icon_size >= NAUTILUS_THUMBNAIL_MINIMUM_ICON_SIZE)
-            {
-                dashed_border_color = color;
-                dashed_border_color.alpha *= border_opacity;
-                nautilus_ui_draw_icon_dashed_border (snapshot, &dash_bounds, dashed_border_color);
-
-                graphene_rect_inset_r (&dash_bounds,
-                                       0.2 * dash_bounds.size.width,
-                                       0.2 * dash_bounds.size.height,
-                                       &icon_bounds);
-            }
-
-            icon_color = color;
-            icon_color.alpha *= dim_opacity;
-            nautilus_ui_draw_symbolic_icon (snapshot,
-                                            icon_name,
-                                            &icon_bounds,
-                                            icon_color,
-                                            gtk_widget_get_scale_factor (widget));
-        }
-        else
-        {
-            g_warning ("Could not compute icon bounds in cell coordinates.");
-        }
-    }
-
-    GTK_WIDGET_CLASS (nautilus_name_cell_parent_class)->snapshot (widget, snapshot);
-}
-
-static void
 nautilus_name_cell_class_init (NautilusNameCellClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
@@ -499,14 +401,8 @@ nautilus_name_cell_class_init (NautilusNameCellClass *klass)
     object_class->dispose = nautilus_name_cell_dispose;
     object_class->finalize = nautilus_name_cell_finalize;
 
-    widget_class->snapshot = snapshot;
-
-    gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
     gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/nautilus/ui/nautilus-name-cell.ui");
 
-    /* Needs to add the direct child of the template widget to dispose it since
-     * a plain GtkWidget doesn't dispose it's child automatically. */
-    gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, top_child);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, expander);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, content);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, fixed_height_box);
@@ -517,7 +413,6 @@ nautilus_name_cell_class_init (NautilusNameCellClass *klass)
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, snippet);
     gtk_widget_class_bind_template_child (widget_class, NautilusNameCell, path);
 
-    gtk_widget_class_bind_template_callback (widget_class, on_label_query_tooltip);
     gtk_widget_class_bind_template_callback (widget_class, popover_show_cb);
 }
 

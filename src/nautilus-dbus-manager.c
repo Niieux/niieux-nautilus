@@ -28,7 +28,6 @@
 #include "nautilus-generated2.h"
 
 #include "nautilus-file-operations.h"
-#include "nautilus-file-operations-dbus-data.h"
 #include "nautilus-file-undo-manager.h"
 #include "nautilus-file.h"
 
@@ -621,7 +620,7 @@ nautilus_dbus_manager_register (NautilusDBusManager  *self,
 {
     gboolean success1;
     gboolean success2;
-    gboolean success;
+    gboolean succes;
 
     success1 = g_dbus_interface_skeleton_export (G_DBUS_INTERFACE_SKELETON (self->file_operations),
                                                  connection,
@@ -633,9 +632,9 @@ nautilus_dbus_manager_register (NautilusDBusManager  *self,
                                                  "/org/gnome/Nautilus" PROFILE "/FileOperations2",
                                                  error);
 
-    success = success1 && success2;
+    succes = success1 && success2;
 
-    if (success)
+    if (succes)
     {
         g_signal_connect_object (nautilus_file_undo_manager_get (),
                                  "undo-changed",
@@ -646,7 +645,7 @@ nautilus_dbus_manager_register (NautilusDBusManager  *self,
         undo_manager_changed (self);
     }
 
-    return success;
+    return succes;
 }
 
 void

@@ -9,7 +9,7 @@
 #include <adwaita.h>
 #include <gtk/gtk.h>
 
-#include "nautilus-types.h"
+#include "nautilus-window-slot.h"
 
 G_BEGIN_DECLS
 

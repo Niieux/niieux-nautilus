@@ -128,8 +128,6 @@ void                    nautilus_file_monitor_add                       (Nautilu
 void                    nautilus_file_monitor_remove                    (NautilusFile                   *file,
 									 gconstpointer                   client);
 
-NautilusDirectory *     nautilus_file_get_directory                     (NautilusFile                   *file);
-
 /* Waiting for data that's read asynchronously.
  * This interface currently works only for metadata, but could be expanded
  * to other attributes as well.
@@ -394,7 +392,7 @@ int                     nautilus_file_compare_for_sort_by_attribute_q   (Nautilu
 									 gboolean                        directories_first,
 									 gboolean                        reversed);
 gboolean                nautilus_file_is_date_sort_attribute_q          (GQuark                          attribute);
-gboolean                nautilus_file_attribute_slow_sort               (const gchar                    *sort_attribute);
+
 int                     nautilus_file_compare_location                  (NautilusFile                    *file_1,
                                                                          NautilusFile                    *file_2);
 

@@ -10,9 +10,9 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
 #include <gtk/gtk.h>
+#include "nautilus-file.h"
+#include "nautilus-files-view.h"
 
 #define HOVER_TIMEOUT 500
 

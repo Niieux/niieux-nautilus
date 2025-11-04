@@ -21,14 +21,12 @@
 #define G_LOG_DOMAIN "nautilus-search"
 
 #include <config.h>
+#include "nautilus-search-hit.h"
+#include "nautilus-search-provider.h"
 #include "nautilus-search-engine-model.h"
-
 #include "nautilus-directory.h"
 #include "nautilus-directory-private.h"
 #include "nautilus-file.h"
-#include "nautilus-query.h"
-#include "nautilus-search-hit.h"
-#include "nautilus-search-provider.h"
 #include "nautilus-ui-utilities.h"
 
 #include <string.h>
@@ -41,11 +39,18 @@ struct _NautilusSearchEngineModel
 
     NautilusQuery *query;
 
-    GPtrArray *hits;
+    GList *hits;
     NautilusDirectory *directory;
 
     gboolean query_pending;
     guint finished_id;
+};
+
+enum
+{
+    PROP_0,
+    PROP_RUNNING,
+    LAST_PROP
 };
 
 static void nautilus_search_provider_init (NautilusSearchProviderInterface *iface);
@@ -63,7 +68,11 @@ finalize (GObject *object)
 
     model = NAUTILUS_SEARCH_ENGINE_MODEL (object);
 
-    g_clear_pointer (&model->hits, g_ptr_array_unref);
+    if (model->hits != NULL)
+    {
+        g_list_free_full (model->hits, g_object_unref);
+        model->hits = NULL;
+    }
 
     if (model->finished_id != 0)
     {
@@ -80,17 +89,20 @@ finalize (GObject *object)
 static gboolean
 search_finished (NautilusSearchEngineModel *model)
 {
-    g_autoptr (GPtrArray) hits = g_steal_pointer (&model->hits);
     model->finished_id = 0;
 
-    if (hits != NULL && hits->len > 0)
+    if (model->hits != NULL)
     {
         g_debug ("Model engine hits added");
         nautilus_search_provider_hits_added (NAUTILUS_SEARCH_PROVIDER (model),
-                                             g_steal_pointer (&hits));
+                                             model->hits);
+        g_list_free_full (model->hits, g_object_unref);
+        model->hits = NULL;
     }
 
     model->query_pending = FALSE;
+
+    g_object_notify (G_OBJECT (model), "running");
 
     g_debug ("Model engine finished");
     nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (model),
@@ -119,8 +131,7 @@ model_directory_ready_cb (NautilusDirectory *directory,
     NautilusSearchEngineModel *model = user_data;
     g_autoptr (GPtrArray) mime_types = NULL;
     gchar *uri;
-    GList *files, *l;
-    GPtrArray *hits = g_ptr_array_new_with_free_func (g_object_unref);
+    GList *files, *hits, *l;
     NautilusFile *file;
     gdouble match;
     gboolean found;
@@ -131,6 +142,7 @@ model_directory_ready_cb (NautilusDirectory *directory,
 
     files = nautilus_directory_get_file_list (directory);
     mime_types = nautilus_query_get_mime_types (model->query);
+    hits = NULL;
 
     for (l = files; l != NULL; l = l->next)
     {
@@ -174,7 +186,7 @@ model_directory_ready_cb (NautilusDirectory *directory,
         date_range = nautilus_query_get_date_range (model->query);
         if (found && date_range != NULL)
         {
-            NautilusSearchTimeType type;
+            NautilusQuerySearchType type;
             GDateTime *target_date;
 
             type = nautilus_query_get_search_type (model->query);
@@ -183,19 +195,19 @@ model_directory_ready_cb (NautilusDirectory *directory,
 
             switch (type)
             {
-                case NAUTILUS_SEARCH_TIME_TYPE_LAST_ACCESS:
+                case NAUTILUS_QUERY_SEARCH_TYPE_LAST_ACCESS:
                 {
                     target_date = atime;
                 }
                 break;
 
-                case NAUTILUS_SEARCH_TIME_TYPE_LAST_MODIFIED:
+                case NAUTILUS_QUERY_SEARCH_TYPE_LAST_MODIFIED:
                 {
                     target_date = mtime;
                 }
                 break;
 
-                case NAUTILUS_SEARCH_TIME_TYPE_CREATED:
+                case NAUTILUS_QUERY_SEARCH_TYPE_CREATED:
                 {
                     target_date = ctime;
                 }
@@ -222,7 +234,7 @@ model_directory_ready_cb (NautilusDirectory *directory,
             nautilus_search_hit_set_access_time (hit, atime);
             nautilus_search_hit_set_creation_time (hit, ctime);
 
-            g_ptr_array_add (hits, hit);
+            hits = g_list_prepend (hits, hit);
 
             g_free (uri);
         }
@@ -234,27 +246,16 @@ model_directory_ready_cb (NautilusDirectory *directory,
     search_finished (model);
 }
 
-static gboolean
-search_engine_model_start (NautilusSearchProvider *provider,
-                           NautilusQuery          *query)
+static void
+nautilus_search_engine_model_start (NautilusSearchProvider *provider)
 {
     NautilusSearchEngineModel *model;
 
     model = NAUTILUS_SEARCH_ENGINE_MODEL (provider);
 
-    g_set_object (&model->query, query);
-
-    g_autoptr (GFile) query_location = nautilus_query_get_location (model->query);
-    g_autoptr (NautilusDirectory) directory = nautilus_directory_get (query_location);
-    g_set_object (&model->directory, directory);
-
     if (model->query_pending)
     {
-        return FALSE;
-    }
-    if (model->directory == NULL)
-    {
-        return FALSE;
+        return;
     }
 
     g_debug ("Model engine start");
@@ -262,11 +263,17 @@ search_engine_model_start (NautilusSearchProvider *provider,
     g_object_ref (model);
     model->query_pending = TRUE;
 
+    g_object_notify (G_OBJECT (provider), "running");
+
+    if (model->directory == NULL)
+    {
+        search_finished_idle (model);
+        return;
+    }
+
     nautilus_directory_call_when_ready (model->directory,
                                         NAUTILUS_FILE_ATTRIBUTE_INFO,
                                         TRUE, model_directory_ready_cb, model);
-
-    return TRUE;
 }
 
 static void
@@ -289,10 +296,58 @@ nautilus_search_engine_model_stop (NautilusSearchProvider *provider)
 }
 
 static void
+nautilus_search_engine_model_set_query (NautilusSearchProvider *provider,
+                                        NautilusQuery          *query)
+{
+    NautilusSearchEngineModel *model;
+
+    model = NAUTILUS_SEARCH_ENGINE_MODEL (provider);
+
+    g_object_ref (query);
+    g_clear_object (&model->query);
+    model->query = query;
+}
+
+static gboolean
+nautilus_search_engine_model_is_running (NautilusSearchProvider *provider)
+{
+    NautilusSearchEngineModel *model;
+
+    model = NAUTILUS_SEARCH_ENGINE_MODEL (provider);
+
+    return model->query_pending;
+}
+
+static void
 nautilus_search_provider_init (NautilusSearchProviderInterface *iface)
 {
-    iface->start = search_engine_model_start;
+    iface->set_query = nautilus_search_engine_model_set_query;
+    iface->start = nautilus_search_engine_model_start;
     iface->stop = nautilus_search_engine_model_stop;
+    iface->is_running = nautilus_search_engine_model_is_running;
+}
+
+static void
+nautilus_search_engine_model_get_property (GObject    *object,
+                                           guint       prop_id,
+                                           GValue     *value,
+                                           GParamSpec *pspec)
+{
+    NautilusSearchProvider *self = NAUTILUS_SEARCH_PROVIDER (object);
+
+    switch (prop_id)
+    {
+        case PROP_RUNNING:
+        {
+            g_value_set_boolean (value, nautilus_search_engine_model_is_running (self));
+        }
+        break;
+
+        default:
+        {
+            G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+        }
+    }
 }
 
 static void
@@ -302,6 +357,14 @@ nautilus_search_engine_model_class_init (NautilusSearchEngineModelClass *class)
 
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = finalize;
+    gobject_class->get_property = nautilus_search_engine_model_get_property;
+
+    /**
+     * NautilusSearchEngine::running:
+     *
+     * Whether the search engine is running a search.
+     */
+    g_object_class_override_property (gobject_class, PROP_RUNNING, "running");
 }
 
 static void
@@ -317,4 +380,17 @@ nautilus_search_engine_model_new (void)
     engine = g_object_new (NAUTILUS_TYPE_SEARCH_ENGINE_MODEL, NULL);
 
     return engine;
+}
+
+void
+nautilus_search_engine_model_set_model (NautilusSearchEngineModel *model,
+                                        NautilusDirectory         *directory)
+{
+    g_set_object (&model->directory, directory);
+}
+
+NautilusDirectory *
+nautilus_search_engine_model_get_model (NautilusSearchEngineModel *model)
+{
+    return model->directory;
 }

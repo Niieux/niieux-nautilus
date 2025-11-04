@@ -57,18 +57,12 @@ void        nautilus_g_menu_replace_string_in_item  (GMenu             *menu,
 void        nautilus_ui_frame_video                 (GtkSnapshot       *snapshot,
                                                      gdouble            width,
                                                      gdouble            height);
-void        nautilus_ui_draw_icon_dashed_border     (GtkSnapshot     *snapshot,
-                                                     graphene_rect_t *rect,
-                                                     GdkRGBA          color);
-void        nautilus_ui_draw_symbolic_icon          (GtkSnapshot           *snapshot,
-                                                     const gchar           *icon_name,
-                                                     const graphene_rect_t *rect,
-                                                     GdkRGBA                color,
-                                                     int                    scale);
 
 gboolean    nautilus_date_time_is_between_dates     (GDateTime         *date,
                                                      GDateTime         *initial_date,
                                                      GDateTime         *end_date);
+gchar     * get_text_for_date_range                 (GPtrArray         *date_range,
+                                                     gboolean           prefix_with_since);
 
 AdwMessageDialog * show_dialog                      (const gchar       *primary_text,
                                                      const gchar       *secondary_text,

@@ -20,11 +20,9 @@
 #define G_LOG_DOMAIN "nautilus-search"
 
 #include <config.h>
-#include "nautilus-search-engine-recent.h"
-
-#include "nautilus-query.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
+#include "nautilus-search-engine-recent.h"
 #include "nautilus-ui-utilities.h"
 
 #include <string.h>
@@ -46,7 +44,6 @@ struct _NautilusSearchEngineRecent
     gboolean running;
     GCancellable *cancellable;
     GtkRecentManager *recent_manager;
-    GPtrArray *hits;
     guint add_hits_idle_id;
 };
 
@@ -57,6 +54,14 @@ G_DEFINE_TYPE_WITH_CODE (NautilusSearchEngineRecent,
                          G_TYPE_OBJECT,
                          G_IMPLEMENT_INTERFACE (NAUTILUS_TYPE_SEARCH_PROVIDER,
                                                 nautilus_search_provider_init))
+
+enum
+{
+    PROP_0,
+    PROP_RUNNING,
+    LAST_PROP
+};
+
 
 NautilusSearchEngineRecent *
 nautilus_search_engine_recent_new (void)
@@ -74,49 +79,62 @@ nautilus_search_engine_recent_finalize (GObject *object)
 
     g_clear_object (&self->query);
     g_clear_object (&self->cancellable);
-    g_clear_pointer (&self->hits, g_ptr_array_unref);
 
     G_OBJECT_CLASS (nautilus_search_engine_recent_parent_class)->finalize (object);
 }
 
+typedef struct
+{
+    NautilusSearchEngineRecent *recent;
+    GList *hits;
+} SearchHitsData;
+
+
 static gboolean
 search_thread_add_hits_idle (gpointer user_data)
 {
-    g_autoptr (NautilusSearchEngineRecent) self = user_data;
+    SearchHitsData *search_hits = user_data;
+    g_autoptr (NautilusSearchEngineRecent) self = search_hits->recent;
     NautilusSearchProvider *provider = NAUTILUS_SEARCH_PROVIDER (self);
 
     self->add_hits_idle_id = 0;
-    if (self->hits->len > 0 &&
-        !g_cancellable_is_cancelled (self->cancellable))
+
+    if (!g_cancellable_is_cancelled (self->cancellable))
     {
-        nautilus_search_provider_hits_added (provider, g_steal_pointer (&self->hits));
+        nautilus_search_provider_hits_added (provider, search_hits->hits);
         g_debug ("Recent engine add hits");
     }
 
     self->running = FALSE;
+    g_list_free_full (search_hits->hits, g_object_unref);
     g_clear_object (&self->cancellable);
-    g_clear_pointer (&self->hits, g_ptr_array_unref);
+    g_free (search_hits);
 
     g_debug ("Recent engine finished");
     nautilus_search_provider_finished (provider,
                                        NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
+    g_object_notify (G_OBJECT (provider), "running");
 
     return FALSE;
 }
 
 static void
 search_add_hits_idle (NautilusSearchEngineRecent *self,
-                      GPtrArray                  *hits)
+                      GList                      *hits)
 {
+    SearchHitsData *search_hits;
+
     if (self->add_hits_idle_id != 0)
     {
-        g_clear_pointer (&hits, g_ptr_array_unref);
-
+        g_list_free_full (hits, g_object_unref);
         return;
     }
 
-    self->hits = hits;
-    self->add_hits_idle_id = g_idle_add (search_thread_add_hits_idle, g_object_ref (self));
+    search_hits = g_new0 (SearchHitsData, 1);
+    search_hits->recent = g_object_ref (self);
+    search_hits->hits = hits;
+
+    self->add_hits_idle_id = g_idle_add (search_thread_add_hits_idle, search_hits);
 }
 
 static gboolean
@@ -186,11 +204,12 @@ recent_thread_func (gpointer user_data)
     g_autoptr (GFile) query_location = NULL;
     g_autoptr (GPtrArray) mime_types = NULL;
     GList *recent_items;
-    GPtrArray *hits = g_ptr_array_new_with_free_func (g_object_unref);
+    GList *hits;
     GList *l;
 
     g_return_val_if_fail (self->query, NULL);
 
+    hits = NULL;
     recent_items = gtk_recent_manager_get_items (self->recent_manager);
     mime_types = nautilus_query_get_mime_types (self->query);
     date_range = nautilus_query_get_date_range (self->query);
@@ -278,7 +297,7 @@ recent_thread_func (gpointer user_data)
 
             if (date_range != NULL)
             {
-                NautilusSearchTimeType type;
+                NautilusQuerySearchType type;
                 GDateTime *target_date;
                 GDateTime *initial_date;
                 GDateTime *end_date;
@@ -289,19 +308,19 @@ recent_thread_func (gpointer user_data)
 
                 switch (type)
                 {
-                    case NAUTILUS_SEARCH_TIME_TYPE_LAST_ACCESS:
+                    case NAUTILUS_QUERY_SEARCH_TYPE_LAST_ACCESS:
                     {
                         target_date = atime;
                     }
                     break;
 
-                    case NAUTILUS_SEARCH_TIME_TYPE_LAST_MODIFIED:
+                    case NAUTILUS_QUERY_SEARCH_TYPE_LAST_MODIFIED:
                     {
                         target_date = mtime;
                     }
                     break;
 
-                    case NAUTILUS_SEARCH_TIME_TYPE_CREATED:
+                    case NAUTILUS_QUERY_SEARCH_TYPE_CREATED:
                     {
                         target_date = ctime;
                     }
@@ -327,7 +346,7 @@ recent_thread_func (gpointer user_data)
             nautilus_search_hit_set_access_time (hit, atime);
             nautilus_search_hit_set_creation_time (hit, ctime);
 
-            g_ptr_array_add (hits, hit);
+            hits = g_list_prepend (hits, hit);
         }
     }
 
@@ -338,16 +357,15 @@ recent_thread_func (gpointer user_data)
     return NULL;
 }
 
-static gboolean
-search_engine_recent_start (NautilusSearchProvider *provider,
-                            NautilusQuery          *query)
+static void
+nautilus_search_engine_recent_start (NautilusSearchProvider *provider)
 {
     NautilusSearchEngineRecent *self = NAUTILUS_SEARCH_ENGINE_RECENT (provider);
     g_autoptr (GThread) thread = NULL;
 
-    g_return_val_if_fail (self->cancellable == NULL, FALSE);
+    g_return_if_fail (self->query);
+    g_return_if_fail (self->cancellable == NULL);
 
-    g_set_object (&self->query, query);
     g_debug ("Recent engine start");
 
     self->running = TRUE;
@@ -355,8 +373,9 @@ search_engine_recent_start (NautilusSearchProvider *provider,
     thread = g_thread_new ("nautilus-search-recent", recent_thread_func,
                            g_object_ref (self));
 
-    return TRUE;
+    g_object_notify (G_OBJECT (provider), "running");
 }
+
 static void
 nautilus_search_engine_recent_stop (NautilusSearchProvider *provider)
 {
@@ -372,10 +391,55 @@ nautilus_search_engine_recent_stop (NautilusSearchProvider *provider)
 }
 
 static void
+nautilus_search_engine_recent_set_query (NautilusSearchProvider *provider,
+                                         NautilusQuery          *query)
+{
+    NautilusSearchEngineRecent *self = NAUTILUS_SEARCH_ENGINE_RECENT (provider);
+
+    g_clear_object (&self->query);
+    self->query = g_object_ref (query);
+}
+
+static gboolean
+nautilus_search_engine_recent_is_running (NautilusSearchProvider *provider)
+{
+    NautilusSearchEngineRecent *self = NAUTILUS_SEARCH_ENGINE_RECENT (provider);
+
+    return self->running;
+}
+
+static void
+nautilus_search_engine_recent_get_property (GObject    *object,
+                                            guint       prop_id,
+                                            GValue     *value,
+                                            GParamSpec *pspec)
+{
+    NautilusSearchProvider *provider = NAUTILUS_SEARCH_PROVIDER (object);
+
+    switch (prop_id)
+    {
+        case PROP_RUNNING:
+        {
+            gboolean running;
+            running = nautilus_search_engine_recent_is_running (provider);
+            g_value_set_boolean (value, running);
+        }
+        break;
+
+        default:
+        {
+            G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+        }
+    }
+}
+
+static void
 nautilus_search_provider_init (NautilusSearchProviderInterface *iface)
 {
-    iface->start = search_engine_recent_start;
+    iface->set_query = nautilus_search_engine_recent_set_query;
+    iface->start = nautilus_search_engine_recent_start;
     iface->stop = nautilus_search_engine_recent_stop;
+    iface->is_running = nautilus_search_engine_recent_is_running;
 }
 
 static void
@@ -384,6 +448,9 @@ nautilus_search_engine_recent_class_init (NautilusSearchEngineRecentClass *klass
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
     object_class->finalize = nautilus_search_engine_recent_finalize;
+    object_class->get_property = nautilus_search_engine_recent_get_property;
+
+    g_object_class_override_property (object_class, PROP_RUNNING, "running");
 }
 
 static void

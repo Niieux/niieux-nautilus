@@ -27,8 +27,6 @@
 #include "nautilus-search-directory.h"
 #include "nautilus-star-cell.h"
 #include "nautilus-tag-manager.h"
-#include "nautilus-view-item.h"
-#include "nautilus-view-model.h"
 
 /* We wait two seconds after row is collapsed to unload the subdirectory */
 #define COLLAPSE_TO_UNLOAD_DELAY 2
@@ -77,6 +75,26 @@ static const NautilusViewInfo list_view_info =
     .zoom_level_max = NAUTILUS_LIST_ZOOM_LEVEL_LARGE,
     .zoom_level_standard = NAUTILUS_LIST_ZOOM_LEVEL_MEDIUM,
 };
+
+/** HACK: Iterates the children of a GtkColumnView to find its list base.
+ *  Used because GtkColumnView does not provide functionality to do so. */
+static GtkWidget *
+get_gtk_column_list_view (GtkColumnView *column_view)
+{
+    g_autoptr (GListModel) children = gtk_widget_observe_children (GTK_WIDGET (column_view));
+
+    for (guint i = 0; i < g_list_model_get_n_items (children); i++)
+    {
+        g_autoptr (GtkWidget) child = g_list_model_get_item (children, i);
+
+        if (GTK_IS_LIST_BASE (child))
+        {
+            return g_steal_pointer (&child);
+        }
+    }
+
+    return NULL;
+}
 
 static NautilusViewInfo
 real_get_view_info (NautilusListBase *list_base)
@@ -142,7 +160,7 @@ apply_columns_settings (NautilusListView  *self,
 
     if (self->search_directory != NULL)
     {
-        location = nautilus_search_directory_get_search_location (self->search_directory);
+        location = nautilus_query_get_location (nautilus_search_directory_get_query (self->search_directory));
     }
 
     if (location == NULL)
@@ -318,7 +336,7 @@ get_base_location (NautilusListView *self)
     {
         g_autoptr (GFile) location = NULL;
 
-        location = nautilus_search_directory_get_search_location (self->search_directory);
+        location = nautilus_query_get_location (nautilus_search_directory_get_query (self->search_directory));
 
         if (location != NULL &&
             !g_file_has_uri_scheme (location, SCHEME_RECENT) &&
@@ -350,11 +368,11 @@ setup_row (GtkSignalListItemFactory *factory,
     GtkExpression *expression;
 
     /* Use file display name as accessible label. Explaining in pseudo-code:
-     * columnviewrow:accessible-name :- columnviewrow:item:item:file:a11y-name */
+     * columnviewrow:accessible-name :- columnviewrow:item:item:file:display-name */
     expression = gtk_property_expression_new (GTK_TYPE_LIST_ITEM, NULL, "item");
     expression = gtk_property_expression_new (GTK_TYPE_TREE_LIST_ROW, expression, "item");
     expression = gtk_property_expression_new (NAUTILUS_TYPE_VIEW_ITEM, expression, "file");
-    expression = gtk_property_expression_new (NAUTILUS_TYPE_FILE, expression, "a11y-name");
+    expression = gtk_property_expression_new (NAUTILUS_TYPE_FILE, expression, "display-name");
     gtk_expression_bind (expression, columnviewrow, "accessible-label", columnviewrow);
 }
 
@@ -1124,6 +1142,14 @@ nautilus_list_view_init (NautilusListView *self)
 
     self->view_ui = create_view_ui (self);
     nautilus_list_base_setup_gestures (NAUTILUS_LIST_BASE (self));
+
+    /* FIXME: GTK currently does not have a way to get the list view contained
+     * within GtkColumnView for us to attach gestures to. */
+    g_autoptr (GtkWidget) list_view = get_gtk_column_list_view (self->view_ui);
+    if (list_view != NULL)
+    {
+        nautilus_list_base_setup_background_longpress (NAUTILUS_LIST_BASE (self), list_view);
+    }
 
     setup_view_columns (self);
 

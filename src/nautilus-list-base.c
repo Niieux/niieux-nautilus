@@ -4,11 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-#include "nautilus-list-base.h"
 #include "nautilus-list-base-private.h"
 
 #include "nautilus-application.h"
-#include "nautilus-directory.h"
 #include "nautilus-dnd.h"
 #include "nautilus-view-cell.h"
 #include "nautilus-view-item.h"
@@ -391,6 +389,20 @@ on_item_longpress_pressed (GtkGestureLongPress *gesture,
 
     open_context_menu_on_press (self, cell, x, y);
     gtk_gesture_set_state (GTK_GESTURE (gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+on_view_longpress_pressed (GtkGestureLongPress *gesture,
+                           gdouble              x,
+                           gdouble              y,
+                           gpointer             user_data)
+{
+    NautilusListBase *self = NAUTILUS_LIST_BASE (user_data);
+    NautilusListBasePrivate *priv = nautilus_list_base_get_instance_private (self);
+
+    gtk_selection_model_unselect_all (GTK_SELECTION_MODEL (priv->model));
+
+    g_signal_emit (self, signals[POPUP_BACKGROUND_CONTEXT_MENU], 0, x, y);
 }
 
 static GdkContentProvider *
@@ -1352,6 +1364,18 @@ nautilus_list_base_setup_gestures (NautilusListBase *self)
 }
 
 void
+nautilus_list_base_setup_background_longpress (NautilusListBase *self,
+                                               GtkWidget        *child)
+{
+    GtkEventController *controller = GTK_EVENT_CONTROLLER (gtk_gesture_long_press_new ());
+
+    gtk_widget_add_controller (GTK_WIDGET (child), controller);
+    gtk_gesture_single_set_touch_only (GTK_GESTURE_SINGLE (controller), TRUE);
+    g_signal_connect (controller, "pressed",
+                      G_CALLBACK (on_view_longpress_pressed), self);
+}
+
+void
 nautilus_list_base_disable_dnd (NautilusListBase *self)
 {
     NautilusListBasePrivate *priv = nautilus_list_base_get_instance_private (self);
@@ -1403,9 +1427,9 @@ nautilus_list_base_set_zoom_level (NautilusListBase *self,
 }
 
 /* This should be called when changing view directory, but only once information
- * on the new directory file is ready, because we need it to define sorting,
+ * on the new directory file is ready, becase we need it to define sorting,
  * drop action. etc. We defer on NautilusFilesView the responsibility of calling
- * this at the right time, which, at the time of writing, is the default handler
+ * this at the right time, which, at the time of writing, is the default hanlder
  * of the NautilusFilesView::begin-loading signal. */
 void
 nautilus_list_base_setup_directory (NautilusListBase  *self,

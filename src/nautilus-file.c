@@ -189,7 +189,6 @@ enum
     PROP_0,
     PROP_DIRECTORY,
     PROP_DISPLAY_NAME,
-    PROP_A11Y_NAME,
     N_PROPS
 };
 
@@ -286,7 +285,6 @@ nautilus_file_set_display_name (NautilusFile *file,
         file->details->display_name_collation_key = g_utf8_collate_key_for_filename (display_name, -1);
 
         g_object_notify_by_pspec (G_OBJECT (file), properties[PROP_DISPLAY_NAME]);
-        g_object_notify_by_pspec (G_OBJECT (file), properties[PROP_A11Y_NAME]);
     }
 
     if (g_strcmp0 (file->details->edit_name, edit_name) != 0)
@@ -858,29 +856,22 @@ nautilus_file_is_self_owned (NautilusFile *file)
 }
 
 static void
-nautilus_file_dispose (GObject *object)
-{
-    NautilusFile *file = NAUTILUS_FILE (object);
-
-    if (file->details->is_thumbnailing)
-    {
-        g_autofree gchar *uri = nautilus_file_get_uri (file);
-
-        nautilus_thumbnail_remove_from_queue (uri);
-    }
-
-    G_OBJECT_CLASS (nautilus_file_parent_class)->dispose (object);
-}
-
-static void
 finalize (GObject *object)
 {
     NautilusDirectory *directory;
     NautilusFile *file;
+    char *uri;
 
     file = NAUTILUS_FILE (object);
 
     g_assert (file->details->operations_in_progress == NULL);
+
+    if (file->details->is_thumbnailing)
+    {
+        uri = nautilus_file_get_uri (file);
+        nautilus_thumbnail_remove_from_queue (uri);
+        g_free (uri);
+    }
 
     nautilus_async_destroying_file (file);
 
@@ -923,6 +914,7 @@ finalize (GObject *object)
     g_clear_pointer (&file->details->group, g_ref_string_release);
     g_free (file->details->selinux_context);
     g_free (file->details->activation_uri);
+    g_clear_object (&file->details->custom_icon);
 
     if (file->details->thumbnail)
     {
@@ -1601,6 +1593,8 @@ nautilus_file_poll_for_media (NautilusFile *file)
 gboolean
 nautilus_file_can_rename (NautilusFile *file)
 {
+    gboolean can_rename;
+
     g_return_val_if_fail (NAUTILUS_IS_FILE (file), FALSE);
 
     /* Nonexistent files can't be renamed. */
@@ -1616,6 +1610,13 @@ nautilus_file_can_rename (NautilusFile *file)
     }
 
     if (nautilus_file_is_home (file))
+    {
+        return FALSE;
+    }
+
+    can_rename = TRUE;
+
+    if (!can_rename)
     {
         return FALSE;
     }
@@ -1781,7 +1782,7 @@ rename_get_info_callback (GObject      *source_object,
 {
     NautilusFileOperation *op;
     NautilusDirectory *directory;
-    g_autoptr (NautilusFile) existing_file = NULL;
+    NautilusFile *existing_file;
     char *old_uri;
     char *new_uri;
     const char *new_name;
@@ -1806,15 +1807,10 @@ rename_get_info_callback (GObject      *source_object,
          * renaming, mark it gone.
          */
         existing_file = nautilus_directory_find_file_by_name (directory, new_name);
-        if (existing_file != NULL)
+        if (existing_file != NULL && existing_file != op->file)
         {
-            g_object_ref (existing_file);
-
-            if (existing_file != op->file)
-            {
-                nautilus_file_mark_gone (existing_file);
-                nautilus_file_changed (existing_file);
-            }
+            nautilus_file_mark_gone (existing_file);
+            nautilus_file_changed (existing_file);
         }
 
         old_location = nautilus_file_get_location (op->file);
@@ -1847,10 +1843,13 @@ rename_callback (GObject      *source_object,
                  GAsyncResult *res,
                  gpointer      callback_data)
 {
-    NautilusFileOperation *op = callback_data;
-    g_autoptr (GFile) new_file = NULL;
-    g_autoptr (GError) error = NULL;
+    NautilusFileOperation *op;
+    GFile *new_file;
+    GError *error;
 
+    op = callback_data;
+
+    error = NULL;
     new_file = g_file_set_display_name_finish (G_FILE (source_object),
                                                res, &error);
 
@@ -1871,6 +1870,7 @@ rename_callback (GObject      *source_object,
     else
     {
         nautilus_file_operation_complete (op, NULL, error);
+        g_error_free (error);
     }
 }
 
@@ -2033,114 +2033,74 @@ nautilus_file_rename_handle_file_gone (NautilusFile                  *file,
 
 typedef struct
 {
-    GPtrArray *chain_files;
-    gboolean is_cycle;
-
     NautilusFileOperation *op;
-    GAsyncQueue *rollback_queue;
-} RenameChainData;
-
-typedef struct
-{
-    GList *old_files;
-    GList *new_files;
-} TwoLists;
+    NautilusFile *file;
+} BatchRenameData;
 
 static void
-rename_file_chain (gpointer data,
-                   gpointer user_data)
+batch_rename_get_info_callback (GObject      *source_object,
+                                GAsyncResult *res,
+                                gpointer      callback_data)
 {
-    gboolean skip_files = FALSE;
-    g_autofree RenameChainData *rename_chain = data;
-    g_autoptr (GPtrArray) chain_files = rename_chain->chain_files;
-    gsize len = chain_files->len;
-    g_autoptr (GFile) snapped_file = NULL;
-    NautilusFileOperation *op = rename_chain->op;
-    GList *old_files = NULL, *new_files = NULL;
-    GAsyncQueue *changed_files = user_data;
+    NautilusFileOperation *op;
+    NautilusDirectory *directory;
+    NautilusFile *existing_file;
+    char *old_uri;
+    char *new_uri;
+    const char *new_name;
+    GFileInfo *new_info;
+    GError *error;
+    BatchRenameData *data;
 
-    if (rename_chain->is_cycle)
+    data = callback_data;
+
+    op = data->op;
+    op->file = data->file;
+
+    error = NULL;
+    new_info = g_file_query_info_finish (G_FILE (source_object), res, &error);
+    if (new_info != NULL)
     {
-        /* We have a cycle, break it with a temporary name. */
-        g_autofree gchar *random_string = g_uuid_string_random ();
+        old_uri = nautilus_file_get_uri (op->file);
 
-        snapped_file = g_ptr_array_index (chain_files, len - 1);
-        GFile *renamed_file = g_file_set_display_name (snapped_file,
-                                                       random_string,
-                                                       op->cancellable,
-                                                       NULL);
+        new_name = g_file_info_get_name (new_info);
 
-        if (renamed_file != NULL)
+        directory = op->file->details->directory;
+
+        /* If there was another file by the same name in this
+         * directory and it is not the same file that we are
+         * renaming, mark it gone.
+         */
+        existing_file = nautilus_directory_find_file_by_name (directory, new_name);
+        if (existing_file != NULL && existing_file != op->file)
         {
-            chain_files->pdata[len - 1] = renamed_file;
+            nautilus_file_mark_gone (existing_file);
+            nautilus_file_changed (existing_file);
         }
-        else
-        {
-            /* Unlikely to be a name conflict, skip the entire chain. */
-            g_autoptr (GFile) parent = g_file_get_parent (snapped_file);
-            GFile *new_file = g_file_get_child (parent, random_string);
-            TwoLists *rollback_files = g_new0 (TwoLists, 1);
 
-            rollback_files->old_files = g_list_prepend (NULL, g_object_ref (snapped_file));
-            rollback_files->new_files = g_list_prepend (NULL, new_file);
-            g_async_queue_push (rename_chain->rollback_queue, rollback_files);
+        update_info_and_name (op->file, new_info);
 
-            skip_files = TRUE;
-        }
+        new_uri = nautilus_file_get_uri (op->file);
+        nautilus_directory_moved (old_uri, new_uri);
+        g_free (new_uri);
+        g_free (old_uri);
+        g_object_unref (new_info);
     }
 
-    /* Process the chain leading to this file */
-    for (uint i = 0; i < len - 1; i++)
+    op->renamed_files++;
+
+    if (op->files == NULL ||
+        op->renamed_files + op->skipped_files == g_list_length (op->files))
     {
-        GFile *src = g_ptr_array_index (chain_files, i + 1);
-        GFile *target = g_ptr_array_index (chain_files, i);
-
-        if (skip_files)
-        {
-            guint remaining = len - 1 - i;
-
-            g_atomic_int_add (&op->skipped_files, remaining);
-            break;
-        }
-
-        g_autofree gchar *new_name = g_file_get_basename (target);
-        g_autoptr (GError) error = NULL;
-
-        /* Do the renaming. */
-        g_autoptr (GFile) renamed_file = g_file_set_display_name (src,
-                                                                  new_name,
-                                                                  op->cancellable,
-                                                                  &error);
-
-        if (error != NULL)
-        {
-            g_autofree gchar *old_name = g_file_get_basename (src);
-            g_warning ("Batch rename for file \"%s\" failed: %s",
-                       old_name, error->message);
-
-            /* We need to skip the rest of the files in the chain. */
-            skip_files = TRUE;
-            g_atomic_int_inc (&op->skipped_files);
-        }
-        else
-        {
-            g_atomic_int_inc (&op->renamed_files);
-            old_files = g_list_prepend (old_files, g_object_ref (src));
-            new_files = g_list_prepend (new_files, g_steal_pointer (&renamed_file));
-        }
+        nautilus_file_operation_complete (op, NULL, error);
     }
 
-    if (snapped_file != NULL)
+    g_free (data);
+
+    if (error)
     {
-        /* Use the original snapped file to undo the operation correctly. */
-        g_set_object (&old_files->data, snapped_file);
+        g_error_free (error);
     }
-
-    TwoLists *changed_files_lists = g_new0 (TwoLists, 1);
-
-    changed_files_lists->old_files = old_files;
-    changed_files_lists->new_files = new_files;
-    g_async_queue_push (changed_files, changed_files_lists);
 }
 
 static void
@@ -2149,27 +2109,18 @@ real_batch_rename (GList                         *files,
                    NautilusFileOperationCallback  callback,
                    gpointer                       callback_data)
 {
-    GList *l1, *l2;
-    g_autolist (GFile) old_files = NULL, new_files = NULL;
+    GList *l1, *l2, *old_files, *new_files;
     NautilusFileOperation *op;
-    gsize len = 0;
-    /* `staged_targets` and `staged_files` are for the file => renamed file map
-     * and a reverse map respectively. */
-    g_autoptr (GHashTable) staged_targets = g_hash_table_new (g_file_hash, (GEqualFunc) g_file_equal);
-    g_autoptr (GHashTable) staged_files = g_hash_table_new_full (g_file_hash,
-                                                                 (GEqualFunc) g_file_equal,
-                                                                 g_object_unref, g_object_unref);
-    /* `stub_files` are for files that will not or cannot be renamed without
-     * trying. */
-    g_autoptr (GHashTable) stub_files = g_hash_table_new_full (g_file_hash,
-                                                               (GEqualFunc) g_file_equal,
-                                                               g_object_unref, NULL);
-    GHashTableIter hash_iter;
-    GFile *key, *value;
-    g_autoptr (GAsyncQueue) changed_files = g_async_queue_new ();
-    GThreadPool *thread_pool = NULL;
-    g_autoptr (GAsyncQueue) rollback_files = g_async_queue_new ();
-    g_autoptr (GError) skip_error = NULL;
+    GFile *location;
+    GString *new_name;
+    NautilusFile *file;
+    GError *error;
+    GFile *new_file;
+    BatchRenameData *data;
+
+    error = NULL;
+    old_files = NULL;
+    new_files = NULL;
 
     /* Set up a batch renaming operation. */
     op = nautilus_file_operation_new (files->data, callback, callback_data);
@@ -2177,199 +2128,88 @@ real_batch_rename (GList                         *files,
     op->renamed_files = 0;
     op->skipped_files = 0;
 
-    /* Collect valid files in hashtables */
-    for (l1 = files, l2 = new_names; l1 != NULL && l2 != NULL; l1 = l1->next, l2 = l2->next)
+    for (l1 = files->next; l1 != NULL; l1 = l1->next)
     {
-        NautilusFile *file = NAUTILUS_FILE (l1->data);
-        GString *new_name = l2->data;
-        GFile *location = nautilus_file_get_location (file);
-        const char *new_file_name = nautilus_file_can_rename_file (file, new_name->str,
-                                                                   NULL, NULL);
-
-        len++;
-
-        if (new_file_name == NULL)
-        {
-            g_hash_table_add (stub_files, location);
-
-            if (name_is (file, new_name->str))
-            {
-                /* We are ignoring this rename, and not even adding to the undo list. */
-                op->renamed_files++;
-            }
-            else
-            {
-                op->skipped_files++;
-            }
-
-            continue;
-        }
-
-        g_autoptr (GFile) parent = nautilus_file_get_parent_location (file);
-        g_autoptr (GFile) target = g_file_get_child (parent, new_file_name);
-
-        if (g_hash_table_lookup (stub_files, target) != NULL)
-        {
-            /* file depends on a stub, so it becomes a stub itself */
-            op->skipped_files++;
-            g_hash_table_add (stub_files, location);
-
-            continue;
-        }
+        file = NAUTILUS_FILE (l1->data);
 
         file->details->operations_in_progress = g_list_prepend (file->details->operations_in_progress,
                                                                 op);
-        g_assert (g_hash_table_insert (staged_targets, location, target));
-        g_assert (g_hash_table_insert (staged_files, g_steal_pointer (&target), location));
     }
 
-    thread_pool = g_thread_pool_new ((GFunc) rename_file_chain, changed_files,
-                                     MIN (32, len), FALSE, NULL);
-
-    /* Discover and assemble individual dependency chains by walking the hash
-     * table and push them into thread pools. */
-    g_hash_table_iter_init (&hash_iter, staged_targets);
-    while (g_hash_table_iter_next (&hash_iter, (gpointer *) &key, (gpointer *) &value))
+    for (l1 = files, l2 = new_names; l1 != NULL && l2 != NULL; l1 = l1->next, l2 = l2->next)
     {
-        GFile *chain_file = key, *iter_start_file = key;
-        RenameChainData *rename_chain = g_new0 (RenameChainData, 1);
-        rename_chain->chain_files = g_ptr_array_new_full (3, g_object_unref);
-        rename_chain->op = op;
-        rename_chain->rollback_queue = rollback_files;
+        const char *new_file_name;
+        file = NAUTILUS_FILE (l1->data);
+        new_name = l2->data;
 
-        /* Iterate to find out if it's a chain or a cycle. */
-        while (TRUE)
+        location = nautilus_file_get_location (file);
+
+        new_file_name = nautilus_file_can_rename_file (file,
+                                                       new_name->str,
+                                                       callback,
+                                                       callback_data);
+
+        if (new_file_name == NULL)
         {
-            GFile *prev_chain_file = g_hash_table_lookup (staged_targets, chain_file);
+            op->skipped_files++;
 
-            if (prev_chain_file == NULL)
-            {
-                /* Reached chain start */
-                break;
-            }
-
-            if (g_file_equal (iter_start_file, prev_chain_file))
-            {
-                /* We found a cycle */
-                rename_chain->is_cycle = TRUE;
-                g_ptr_array_add (rename_chain->chain_files, g_object_ref (iter_start_file));
-
-                break;
-            }
-
-            chain_file = prev_chain_file;
+            continue;
         }
 
-        GFile *target = chain_file;
+        g_assert (G_IS_FILE (location));
 
-        iter_start_file = chain_file;
+        /* Do the renaming. */
+        new_file = g_file_set_display_name (location,
+                                            new_file_name,
+                                            op->cancellable,
+                                            &error);
 
-        /* Walk the reverse hash table to collect a list of the files to be
-         * renamed in an ordered list, but terminate appropriately with a
-         * cycle. */
-        do
+        data = g_new0 (BatchRenameData, 1);
+        data->op = op;
+        data->file = file;
+
+        g_file_query_info_async (new_file,
+                                 NAUTILUS_FILE_DEFAULT_ATTRIBUTES,
+                                 0,
+                                 G_PRIORITY_DEFAULT,
+                                 op->cancellable,
+                                 batch_rename_get_info_callback,
+                                 data);
+
+        if (error != NULL)
         {
-            g_autoptr (GFile) src = NULL;
-            GFile *new_target = NULL;
+            g_warning ("Batch rename for file \"%s\" failed", nautilus_file_get_name (file));
+            g_error_free (error);
+            error = NULL;
 
-            g_ptr_array_add (rename_chain->chain_files, target);
-
-            if (g_hash_table_steal_extended (staged_files, target, (gpointer *) &src, (gpointer *) &new_target))
-            {
-                g_hash_table_remove (staged_targets, new_target);
-
-                if (src == target)
-                {
-                    src = NULL;
-                }
-
-                if (rename_chain->is_cycle && g_file_equal (new_target, iter_start_file))
-                {
-                    g_object_unref (new_target);
-                    break;
-                }
-            }
-
-            target = new_target;
+            op->skipped_files++;
         }
-        while (target != NULL);
-
-        g_thread_pool_push (thread_pool, rename_chain, NULL);
-        g_hash_table_iter_init (&hash_iter, staged_targets);
-    }
-
-    /* Wait for threads to finish and collect the changes. */
-    g_thread_pool_free (thread_pool, FALSE, TRUE);
-    while (g_async_queue_length (changed_files) > 0)
-    {
-        g_autofree TwoLists *changed_files_lists = g_async_queue_pop (changed_files);
-
-        old_files = g_list_concat (changed_files_lists->old_files, old_files);
-        new_files = g_list_concat (changed_files_lists->new_files, new_files);
-    }
-
-    /* Attempt to rename back the files that were renamed to temporary names.
-     * Don't handle any errors though, it's likely futile. */
-    while (g_async_queue_length (rollback_files) > 0)
-    {
-        g_autofree TwoLists *rollback_file_lists = g_async_queue_pop (changed_files);
-        g_autoptr (GList) old_file_list = rollback_file_lists->old_files;
-        g_autoptr (GList) new_file_list = rollback_file_lists->new_files;
-
-        g_file_move (new_file_list->data, old_file_list->data,
-                     G_FILE_COPY_NONE, NULL, NULL, NULL, NULL);
-
-        NautilusFile *old_file = nautilus_file_get_existing (old_file_list->data);
-        NautilusFile *new_file = nautilus_file_get_existing (new_file_list->data);
-
-        if (old_file != NULL)
+        else
         {
-            nautilus_file_invalidate_attributes (old_file, NAUTILUS_FILE_ATTRIBUTE_INFO);
-        }
-        if (new_file != NULL)
-        {
-            nautilus_file_invalidate_attributes (new_file, NAUTILUS_FILE_ATTRIBUTE_INFO);
-        }
-    }
-
-    /* Invalidate attributes of modified files in idle. */
-    for (l1 = old_files, l2 = new_files; l1 != NULL; l1 = l1->next, l2 = l2->next)
-    {
-        NautilusFile *old_file = nautilus_file_get_existing (l1->data);
-        NautilusFile *new_file = nautilus_file_get_existing (l2->data);
-
-        if (old_file != NULL)
-        {
-            nautilus_file_invalidate_attributes (old_file, NAUTILUS_FILE_ATTRIBUTE_INFO);
-        }
-        if (new_file != NULL)
-        {
-            nautilus_file_invalidate_attributes (new_file, NAUTILUS_FILE_ATTRIBUTE_INFO);
+            old_files = g_list_append (old_files, location);
+            new_files = g_list_append (new_files, new_file);
         }
     }
 
     /* Tell the undo manager a batch rename is taking place if at least
      * a file has been renamed*/
-    if (!nautilus_file_undo_manager_is_operating () && op->skipped_files != len)
+    if (!nautilus_file_undo_manager_is_operating () && op->skipped_files != g_list_length (files))
     {
         op->undo_info = nautilus_file_undo_info_batch_rename_new (g_list_length (new_files));
 
         nautilus_file_undo_info_batch_rename_set_data_pre (NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (op->undo_info),
-                                                           g_steal_pointer (&old_files));
+                                                           old_files);
 
         nautilus_file_undo_info_batch_rename_set_data_post (NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (op->undo_info),
-                                                            g_steal_pointer (&new_files));
+                                                            new_files);
 
         nautilus_file_undo_manager_set_action (op->undo_info);
     }
 
-    if (op->skipped_files > 1)
+    if (op->skipped_files == g_list_length (files))
     {
-        skip_error = g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
-                                  "Skipped %d file(s)", op->skipped_files);
+        nautilus_file_operation_complete (op, NULL, error);
     }
-
-    nautilus_file_operation_complete (op, NULL, skip_error);
 }
 
 void
@@ -2599,13 +2439,6 @@ update_info_internal (NautilusFile *file,
         changed = TRUE;
     }
     file->details->type = file_type;
-
-    if (!nautilus_file_is_directory (file))
-    {
-        file->details->directory_count_is_up_to_date = TRUE;
-        file->details->directory_count_failed = FALSE;
-        file->details->got_directory_count = FALSE;
-    }
 
     if (g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_VIRTUAL) ||
         file_type == G_FILE_TYPE_SHORTCUT ||
@@ -3038,12 +2871,6 @@ nautilus_file_update_thumbnail_info (NautilusFile *file,
                                      GFileInfo    *info)
 {
     gboolean changed = FALSE;
-
-    if (!file->details->thumbnail_info_is_up_to_date)
-    {
-        file->details->thumbnail_info_is_up_to_date = TRUE;
-        changed = TRUE;
-    }
 
     const gchar *thumbnail_path = g_file_info_get_attribute_byte_string (info,
                                                                          G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
@@ -3492,19 +3319,18 @@ prepend_automatic_keywords (NautilusFile *file,
                             GList        *names)
 {
     /* Prepend in reverse order. */
+    NautilusFile *parent;
+
+    parent = nautilus_file_get_parent (file);
 
     /* Trash files are assumed to be read-only,
      * so we want to ignore them here. */
     if (!nautilus_file_can_write (file) &&
-        !nautilus_file_is_in_trash (file))
+        !nautilus_file_is_in_trash (file) &&
+        (parent == NULL || nautilus_file_can_write (parent)))
     {
-        g_autoptr (NautilusFile) parent = nautilus_file_get_parent (file);
-
-        if (parent == NULL || nautilus_file_can_write (parent))
-        {
-            names = g_list_prepend
-                        (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_CANT_WRITE));
-        }
+        names = g_list_prepend
+                    (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_CANT_WRITE));
     }
     if (!nautilus_file_can_read (file))
     {
@@ -3516,6 +3342,12 @@ prepend_automatic_keywords (NautilusFile *file,
         names = g_list_prepend
                     (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_SYMBOLIC_LINK));
     }
+
+    if (parent)
+    {
+        nautilus_file_unref (parent);
+    }
+
 
     return names;
 }
@@ -4104,9 +3936,7 @@ nautilus_file_should_show (NautilusFile *file,
         return TRUE;
     }
 
-    if (!show_hidden &&
-        file->details->file_info_is_up_to_date &&
-        nautilus_file_is_hidden_file (file))
+    if (!show_hidden && nautilus_file_is_hidden_file (file))
     {
         return FALSE;
     }
@@ -4657,17 +4487,6 @@ get_filesystem_remote (NautilusFile *file,
     }
     else
     {
-        g_autoptr (GFile) location = nautilus_file_get_location (file);
-        /* Should be Okay to use a blocking call if a mount monitor exists. */
-        g_autoptr (GFileInfo) info = g_file_query_filesystem_info (location,
-                                                                   G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE,
-                                                                   NULL, NULL);
-
-        if (info != NULL)
-        {
-            return g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
-        }
-
         return FALSE;
     }
 }
@@ -4741,37 +4560,11 @@ nautilus_file_should_show_thumbnail (NautilusFile *file)
     return get_speed_tradeoff_preference_for_file (file, show_file_thumbs);
 }
 
-static GHashTable *video_mime_types_hash;
-
-static void
-ensure_video_types_hash (void)
-{
-    if (G_LIKELY (video_mime_types_hash != NULL))
-    {
-        return;
-    }
-
-    GList *mime_types = g_content_types_get_registered ();
-    video_mime_types_hash = g_hash_table_new (g_str_hash, g_str_equal);
-
-    for (GList *l = mime_types; l != NULL; l = l->next)
-    {
-        for (uint i = 0; video_mime_types[i] != NULL; i++)
-        {
-            if (g_content_type_equals (video_mime_types[i], l->data))
-            {
-                g_hash_table_add (video_mime_types_hash, (gpointer) video_mime_types[i]);
-            }
-        }
-    }
-
-    g_list_free_full (mime_types, g_free);
-}
-
 static gboolean
 nautilus_is_video_file (NautilusFile *file)
 {
     const char *mime_type;
+    guint i;
 
     mime_type = file->details->mime_type;
     if (mime_type == NULL)
@@ -4779,9 +4572,15 @@ nautilus_is_video_file (NautilusFile *file)
         return FALSE;
     }
 
-    ensure_video_types_hash ();
+    for (i = 0; video_mime_types[i] != NULL; i++)
+    {
+        if (g_content_type_equals (video_mime_types[i], mime_type))
+        {
+            return TRUE;
+        }
+    }
 
-    return g_hash_table_contains (video_mime_types_hash, mime_type);
+    return FALSE;
 }
 
 void
@@ -4994,12 +4793,12 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
         g_autoptr (GtkSnapshot) snapshot = gtk_snapshot_new ();
         GskRoundedRect rounded_rect;
 
-        if (MAX (width, height) != size)
+        if (MAX (width, height) > size)
         {
-            double scale_factor = size / MAX (width, height);
+            float scale_down_factor = MAX (width, height) / size;
 
-            width = round (width * scale_factor);
-            height = round (height * scale_factor);
+            width = width / scale_down_factor;
+            height = height / scale_down_factor;
         }
 
         gsk_rounded_rect_init_from_rect (&rounded_rect,
@@ -5019,12 +4818,8 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
 
         gtk_snapshot_pop (snapshot); /* End rounded clip */
 
-        if (g_getenv ("G_MESSAGES_DEBUG") != NULL)
-        {
-            g_debug ("Returning thumbnailed image, at size %d %d",
-                     (int) (width), (int) (height));
-        }
-
+        g_debug ("Returning thumbnailed image, at size %d %d",
+                 (int) (width), (int) (height));
         paintable = gtk_snapshot_to_paintable (snapshot, NULL);
     }
     else if (file->details->thumbnail_info_is_up_to_date &&
@@ -5039,7 +4834,7 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
 
     if (paintable != NULL)
     {
-        icon = nautilus_icon_info_new_for_paintable (paintable);
+        icon = nautilus_icon_info_new_for_paintable (paintable, scale);
     }
     else if (file->details->is_thumbnailing ||
              (nautilus_file_check_if_ready (file, NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_INFO) &&
@@ -5077,10 +4872,7 @@ nautilus_file_get_icon (NautilusFile          *file,
         goto out;
     }
 
-    if (g_getenv ("G_MESSAGES_DEBUG") != NULL)
-    {
-        g_debug ("Called file_get_icon(), at size %d", size);
-    }
+    g_debug ("Called file_get_icon(), at size %d", size);
 
     if (flags & NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS &&
         size >= NAUTILUS_THUMBNAIL_MINIMUM_ICON_SIZE &&
@@ -7058,19 +6850,6 @@ nautilus_file_is_date_sort_attribute_q (GQuark attribute_q)
     return FALSE;
 }
 
-gboolean
-nautilus_file_attribute_slow_sort (const gchar *sort_attribute)
-{
-    GQuark attribute_q = g_quark_from_string (sort_attribute);
-
-    return attribute_q == attribute_size_q ||
-           attribute_q == attribute_size_detail_q ||
-           attribute_q == attribute_deep_size_q ||
-           attribute_q == attribute_deep_file_count_q ||
-           attribute_q == attribute_deep_directory_count_q ||
-           attribute_q == attribute_deep_total_count_q;
-}
-
 struct
 {
     const char *icon_name;
@@ -7846,6 +7625,8 @@ nautilus_file_mark_gone (NautilusFile *file)
 void
 nautilus_file_changed (NautilusFile *file)
 {
+    GList fake_list;
+
     g_return_if_fail (NAUTILUS_IS_FILE (file));
 
     if (nautilus_file_is_self_owned (file))
@@ -7854,8 +7635,11 @@ nautilus_file_changed (NautilusFile *file)
     }
     else
     {
-        nautilus_directory_emit_change_signals (file->details->directory,
-                                                &(NautilusFileList){ .data = file });
+        fake_list.data = file;
+        fake_list.next = NULL;
+        fake_list.prev = NULL;
+        nautilus_directory_emit_change_signals
+            (file->details->directory, &fake_list);
     }
 }
 
@@ -8783,28 +8567,6 @@ nautilus_file_get_property (GObject    *object,
         }
         break;
 
-        case PROP_A11Y_NAME:
-        {
-            NautilusTagManager *tag_manager = nautilus_tag_manager_get ();
-            g_autofree gchar *uri = nautilus_file_get_uri (file);
-
-            if (nautilus_tag_manager_file_is_starred (tag_manager, uri))
-            {
-                g_autofree gchar *accessible_name = g_strdup_printf (
-                    /* Translators: A "." is added in between file name and starring
-                     * action description as a useful pause in the screen reader
-                     * announcement. */
-                    _("%s. Starred"),
-                    file->details->display_name);
-                g_value_set_string (value, accessible_name);
-            }
-            else
-            {
-                g_value_set_string (value, file->details->display_name);
-            }
-        }
-        break;
-
         default:
         {
             G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -8881,7 +8643,6 @@ nautilus_file_class_init (NautilusFileClass *class)
     attribute_free_space_q = g_quark_from_static_string ("free_space");
     attribute_starred_q = g_quark_from_static_string ("starred");
 
-    G_OBJECT_CLASS (class)->dispose = nautilus_file_dispose;
     G_OBJECT_CLASS (class)->finalize = finalize;
     G_OBJECT_CLASS (class)->constructor = nautilus_file_constructor;
     G_OBJECT_CLASS (class)->get_property = nautilus_file_get_property;
@@ -8948,9 +8709,6 @@ nautilus_file_class_init (NautilusFileClass *class)
     properties[PROP_DISPLAY_NAME] = g_param_spec_string ("display-name", NULL, NULL,
                                                          "",
                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
-    properties[PROP_A11Y_NAME] = g_param_spec_string ("a11y-name", NULL, NULL,
-                                                      "",
-                                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
     g_object_class_install_properties (G_OBJECT_CLASS (class), N_PROPS, properties);
 }
 

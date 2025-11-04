@@ -9,6 +9,8 @@
 #include <adwaita.h>
 #include <gtk/gtk.h>
 
+#include "nautilus-window-slot.h"
+
 G_BEGIN_DECLS
 
 #define NAUTILUS_TYPE_HISTORY_CONTROLS nautilus_history_controls_get_type()

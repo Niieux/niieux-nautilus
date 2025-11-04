@@ -31,6 +31,7 @@
 #include "nautilus-file.h"
 #include "nautilus-file-undo-manager.h"
 #include "nautilus-batch-rename-dialog.h"
+#include "nautilus-batch-rename-utilities.h"
 #include "nautilus-scheme.h"
 #include "nautilus-tag-manager.h"
 
@@ -1200,10 +1201,11 @@ batch_rename_redo_func (NautilusFileUndoInfo           *info,
 {
     NautilusFileUndoInfoBatchRename *self = NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (info);
 
-    GList *l;
-    g_autolist (NautilusFile) files = NULL;
+    GList *l, *files;
     NautilusFile *file;
     GFile *old_file;
+
+    files = NULL;
 
     for (l = self->old_files; l != NULL; l = l->next)
     {
@@ -1215,6 +1217,13 @@ batch_rename_redo_func (NautilusFileUndoInfo           *info,
 
     files = g_list_reverse (files);
 
+    batch_rename_sort_lists_for_rename (&files,
+                                        &self->new_display_names,
+                                        &self->old_display_names,
+                                        &self->new_files,
+                                        &self->old_files,
+                                        TRUE);
+
     nautilus_file_batch_rename (files, self->new_display_names, file_undo_info_operation_callback, self);
 }
 
@@ -1225,10 +1234,11 @@ batch_rename_undo_func (NautilusFileUndoInfo           *info,
 {
     NautilusFileUndoInfoBatchRename *self = NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (info);
 
-    GList *l;
-    g_autolist (NautilusFile) files = NULL;
+    GList *l, *files;
     NautilusFile *file;
     GFile *new_file;
+
+    files = NULL;
 
     for (l = self->new_files; l != NULL; l = l->next)
     {
@@ -1239,6 +1249,13 @@ batch_rename_undo_func (NautilusFileUndoInfo           *info,
     }
 
     files = g_list_reverse (files);
+
+    batch_rename_sort_lists_for_rename (&files,
+                                        &self->old_display_names,
+                                        &self->new_display_names,
+                                        &self->old_files,
+                                        &self->new_files,
+                                        TRUE);
 
     nautilus_file_batch_rename (files, self->old_display_names, file_undo_info_operation_callback, self);
 }
@@ -1446,7 +1463,6 @@ starred_redo_func (NautilusFileUndoInfo           *info,
                                          G_OBJECT (info),
                                          self->files,
                                          on_undo_starred_tags_updated,
-                                         NULL,
                                          NULL);
     }
     else
@@ -1455,7 +1471,6 @@ starred_redo_func (NautilusFileUndoInfo           *info,
                                            G_OBJECT (info),
                                            self->files,
                                            on_undo_starred_tags_updated,
-                                           NULL,
                                            NULL);
     }
 }
@@ -1473,7 +1488,6 @@ starred_undo_func (NautilusFileUndoInfo           *info,
                                            G_OBJECT (info),
                                            self->files,
                                            on_undo_starred_tags_updated,
-                                           NULL,
                                            NULL);
     }
     else
@@ -1482,7 +1496,6 @@ starred_undo_func (NautilusFileUndoInfo           *info,
                                          G_OBJECT (info),
                                          self->files,
                                          on_undo_starred_tags_updated,
-                                         NULL,
                                          NULL);
     }
 }
@@ -1737,8 +1750,7 @@ trash_retrieve_files_to_restore_thread (GTask        *task,
         const char *origpath;
         GFile *origfile;
 
-        while (g_file_enumerator_iterate (enumerator, &info, NULL, NULL, &error) &&
-               info != NULL)
+        while ((info = g_file_enumerator_next_file (enumerator, NULL, &error)) != NULL)
         {
             /* Retrieve the original file uri */
             origpath = g_file_info_get_attribute_byte_string (info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH);

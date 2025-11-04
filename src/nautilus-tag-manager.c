@@ -22,10 +22,9 @@
 #include "nautilus-file.h"
 #include "nautilus-file-undo-operations.h"
 #include "nautilus-file-undo-manager.h"
-#include "nautilus-localsearch-utilities.h"
+#include "nautilus-tracker-utilities.h"
 
 #include <tracker-sparql.h>
-#include <glib/gi18n.h>
 
 #include "config.h"
 
@@ -86,19 +85,6 @@ enum
 static guint signals[LAST_SIGNAL];
 
 static void
-inform_no_localsearch_connection_once (void)
-{
-    static gboolean done = FALSE;
-
-    if (G_UNLIKELY (!done))
-    {
-        done = TRUE;
-
-        g_message ("No Localsearch connection");
-    }
-}
-
-static void
 start_query_or_update (TrackerSparqlConnection *db,
                        GString                 *query,
                        GAsyncReadyCallback      callback,
@@ -110,7 +96,7 @@ start_query_or_update (TrackerSparqlConnection *db,
 
     if (!db)
     {
-        inform_no_localsearch_connection_once ();
+        g_message ("nautilus-tag-manager: No Tracker connection");
         return;
     }
 
@@ -209,26 +195,6 @@ nautilus_tag_manager_get_starred_files (NautilusTagManager *self)
     return starred_files;
 }
 
-void
-nautilus_tag_manager_announce_starred_cb (GObject      *object,
-                                          GAsyncResult *result,
-                                          gpointer      user_data)
-{
-    GtkAccessible *accessible = user_data;
-    gtk_accessible_announce (accessible, _("starred"),
-                             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
-}
-
-void
-nautilus_tag_manager_announce_unstarred_cb (GObject      *object,
-                                            GAsyncResult *result,
-                                            gpointer      user_data)
-{
-    GtkAccessible *accessible = user_data;
-    gtk_accessible_announce (accessible, _("unstarred"),
-                             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
-}
-
 static void
 on_get_starred_files_cursor_callback (GObject      *object,
                                       GAsyncResult *result,
@@ -324,7 +290,7 @@ nautilus_tag_manager_query_starred_files (NautilusTagManager *self,
 {
     if (!self->database_ok)
     {
-        inform_no_localsearch_connection_once ();
+        g_message ("nautilus-tag-manager: No Tracker connection");
         return;
     }
 
@@ -402,7 +368,6 @@ nautilus_tag_manager_star_files (NautilusTagManager  *self,
                                  GObject             *object,
                                  GList               *selection,
                                  GAsyncReadyCallback  callback,
-                                 gpointer             user_data,
                                  GCancellable        *cancellable)
 {
     GString *query;
@@ -415,7 +380,7 @@ nautilus_tag_manager_star_files (NautilusTagManager  *self,
         g_debug ("Starring %i files", g_list_length (selection));
     }
 
-    task = g_task_new (object, cancellable, callback, user_data);
+    task = g_task_new (object, cancellable, callback, NULL);
 
     query = nautilus_tag_manager_insert_tag (self, selection);
 
@@ -440,7 +405,6 @@ nautilus_tag_manager_unstar_files (NautilusTagManager  *self,
                                    GObject             *object,
                                    GList               *selection,
                                    GAsyncReadyCallback  callback,
-                                   gpointer             user_data,
                                    GCancellable        *cancellable)
 {
     GString *query;
@@ -452,7 +416,7 @@ nautilus_tag_manager_unstar_files (NautilusTagManager  *self,
         g_debug ("Unstarring %i files", g_list_length (selection));
     }
 
-    task = g_task_new (object, cancellable, callback, user_data);
+    task = g_task_new (object, cancellable, callback, NULL);
 
     query = nautilus_tag_manager_delete_tag (self, selection);
 
@@ -525,12 +489,7 @@ on_tracker_notifier_events (TrackerNotifier *notifier,
             if (inserted)
             {
                 g_debug ("Added %s to starred files list", file_url);
-                changed_file = nautilus_file_get_existing_by_uri (file_url);
-
-                if (changed_file != NULL)
-                {
-                    g_object_notify (G_OBJECT (changed_file), "a11y-name");
-                }
+                changed_file = nautilus_file_get_by_uri (file_url);
             }
         }
         else
@@ -540,12 +499,7 @@ on_tracker_notifier_events (TrackerNotifier *notifier,
             if (removed)
             {
                 g_debug ("Removed %s from starred files list", file_url);
-                changed_file = nautilus_file_get_existing_by_uri (file_url);
-
-                if (changed_file != NULL)
-                {
-                    g_object_notify (G_OBJECT (changed_file), "a11y-name");
-                }
+                changed_file = nautilus_file_get_by_uri (file_url);
             }
         }
 
@@ -811,7 +765,7 @@ nautilus_tag_manager_update_moved_uris (NautilusTagManager *self,
 
     if (!self->database_ok)
     {
-        inform_no_localsearch_connection_once ();
+        g_message ("nautilus-tag-manager: No Tracker connection");
         return;
     }
 

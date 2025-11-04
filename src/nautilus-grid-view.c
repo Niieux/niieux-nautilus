@@ -4,17 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <glib/gi18n.h>
+
+#include "nautilus-list-base-private.h"
 #include "nautilus-grid-view.h"
 
-#include "nautilus-file.h"
-#include "nautilus-global-preferences.h"
 #include "nautilus-grid-cell.h"
-#include "nautilus-list-base-private.h"
-#include "nautilus-view-cell.h"
-#include "nautilus-view-item.h"
-#include "nautilus-view-model.h"
-
-#include <glib/gi18n.h>
+#include "nautilus-global-preferences.h"
 
 struct _NautilusGridView
 {
@@ -298,7 +294,6 @@ real_preview_selection_event (NautilusListBase *list_base,
     /* If the hack fails (GTK may change it's internal behavior), fallback. */
     if (!success)
     {
-        g_warning_once ("GTK shortcut behavior has changed, manual shortcut method failed");
         NAUTILUS_LIST_BASE_CLASS (nautilus_grid_view_parent_class)->preview_selection_event (list_base, direction);
     }
 }
@@ -472,11 +467,11 @@ setup_cell (GtkSignalListItemFactory *factory,
     nautilus_grid_cell_set_caption_attributes (cell, self->caption_attributes);
 
     /* Use file display name as accessible label. Explaining in pseudo-code:
-     * listitem:accessible-name :- listitem:item:item:file:a11y-name */
+     * listitem:accessible-name :- listitem:item:item:file:display-name */
     expression = gtk_property_expression_new (GTK_TYPE_LIST_ITEM, NULL, "item");
     expression = gtk_property_expression_new (GTK_TYPE_TREE_LIST_ROW, expression, "item");
     expression = gtk_property_expression_new (NAUTILUS_TYPE_VIEW_ITEM, expression, "file");
-    expression = gtk_property_expression_new (NAUTILUS_TYPE_FILE, expression, "a11y-name");
+    expression = gtk_property_expression_new (NAUTILUS_TYPE_FILE, expression, "display-name");
     gtk_expression_bind (expression, listitem, "accessible-label", listitem);
 }
 
@@ -569,6 +564,8 @@ nautilus_grid_view_init (NautilusGridView *self)
 
     self->view_ui = create_view_ui (self);
     nautilus_list_base_setup_gestures (NAUTILUS_LIST_BASE (self));
+    nautilus_list_base_setup_background_longpress (NAUTILUS_LIST_BASE (self),
+                                                   GTK_WIDGET (self->view_ui));
 
     g_signal_connect_swapped (self, "notify::model", G_CALLBACK (on_model_changed), self);
 

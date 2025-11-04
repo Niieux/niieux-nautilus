@@ -3,7 +3,7 @@
   <requires lib="gtk" version="4.0"/>
   <template class="NautilusNameCell" parent="NautilusViewCell">
     <child>
-      <object class="GtkBox" id="top_child">
+      <object class="GtkBox">
         <child>
           <object class="GtkTreeExpander" id="expander">
             <property name="indent-for-icon">False</property>
@@ -58,8 +58,6 @@
                         <property name="wrap">False</property>
                         <property name="wrap-mode">word-char</property>
                         <property name="halign">start</property>
-                        <property name="has-tooltip">true</property>
-                        <signal name="query-tooltip" handler="on_label_query_tooltip"/>
                         <binding name="label">
                           <lookup name="display-name">
                             <lookup name="file">

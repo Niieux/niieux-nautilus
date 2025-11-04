@@ -1,9 +1,7 @@
 #include "nautilus-view-model.h"
-
-#include "nautilus-directory.h"
-#include "nautilus-file.h"
-#include "nautilus-global-preferences.h"
 #include "nautilus-view-item.h"
+#include "nautilus-directory.h"
+#include "nautilus-global-preferences.h"
 
 /**
  * NautilusViewModel:

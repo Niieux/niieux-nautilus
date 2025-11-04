@@ -1,19 +1,6 @@
-/*
- * Copyright © 2025 Khalid Abu Shawarib
- *
- * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * Authors: Khalid Abu Shawarib <kas@gnome.org>
- */
-
 #include "test-utilities.h"
 
-#include <sched.h>
-#include <sys/random.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <src/nautilus-file-undo-manager.h>
-#include <src/nautilus-file-utilities.h>
+#define ASYNC_FILE_LIMIT 100
 
 static gchar *nautilus_tmp_dir = NULL;
 
@@ -33,9 +20,6 @@ test_clear_tmp_dir (void)
 {
     if (nautilus_tmp_dir != NULL)
     {
-        g_autoptr (GFile) tmp_dir = g_file_new_for_path (nautilus_tmp_dir);
-
-        empty_directory_by_prefix (tmp_dir, "");
         rmdir (nautilus_tmp_dir);
         g_clear_pointer (&nautilus_tmp_dir, g_free);
     }
@@ -70,7 +54,7 @@ test_init_config_dir (void)
         g_autoptr (GFileOutputStream) stream = g_file_replace (bookmarks_file,
                                                                NULL,
                                                                FALSE,
-                                                               G_FILE_CREATE_NONE,
+                                                               G_FILE_CREATE_REPLACE_DESTINATION,
                                                                NULL, &error);
         g_assert_no_error (error);
         g_output_stream_close (G_OUTPUT_STREAM (stream), NULL, &error);
@@ -116,8 +100,8 @@ empty_directory_by_prefix (GFile *parent,
 }
 
 void
-file_hierarchy_create (const GStrv  hier,
-                       const gchar *substitution)
+create_hierarchy_from_template (const GStrv  hier,
+                                const gchar *substitution)
 {
     const gchar *root_path = test_get_tmp_dir ();
 
@@ -140,115 +124,13 @@ file_hierarchy_create (const GStrv  hier,
         {
             g_autoptr (GFileOutputStream) stream = g_file_create (file, G_FILE_CREATE_NONE,
                                                                   NULL, NULL);
-            g_autofree gchar *name = g_file_get_basename (file);
-
-            g_output_stream_write_all (G_OUTPUT_STREAM (stream), name, strlen (name) + 1,
-                                       NULL, NULL, NULL);
-        }
-
-        g_assert_true (g_file_query_exists (file, NULL));
-    }
-}
-
-void
-file_hierarchy_foreach (const GStrv        hier,
-                        const gchar       *substitution,
-                        HierarchyCallback  func,
-                        gpointer           user_data)
-{
-    const gchar *root_path = test_get_tmp_dir ();
-    guint len = g_strv_length (hier);
-
-    for (guint i = 0; i < len; i++)
-    {
-        g_autoptr (GFile) file = NULL;
-        g_autoptr (GString) file_path = g_string_new (hier[i]);
-
-        g_string_replace (file_path, "%s", substitution, 0);
-        g_string_prepend (file_path, G_DIR_SEPARATOR_S);
-        g_string_prepend (file_path, root_path);
-        file = g_file_new_for_path (file_path->str);
-
-        func (G_FILE (file), user_data);
-    }
-}
-
-typedef struct
-{
-    GList **files;
-    gboolean shallow;
-} TestFileListData;
-
-static void
-append_file_to_list (GFile    *file,
-                     gpointer  user_data)
-{
-    TestFileListData *data = user_data;
-    GList **files = data->files;
-
-    if (data->shallow)
-    {
-        g_autoptr (GFile) tmp_root = g_file_new_for_path (test_get_tmp_dir ());
-
-        if (!g_file_has_parent (file, tmp_root))
-        {
-            return;
         }
     }
-
-    *files = g_list_append (*files, g_object_ref (file));
-}
-
-GList *
-file_hierarchy_get_files_list (const GStrv  hier,
-                               const gchar *substitution,
-                               gboolean     shallow)
-{
-    GList *files = NULL;
-    TestFileListData data =
-    {
-        .files = &files,
-        .shallow = shallow,
-    };
-
-    file_hierarchy_foreach (hier,
-                            substitution,
-                            append_file_to_list,
-                            &data);
-
-    return files;
 }
 
 static void
-assert_file_exist (GFile    *location,
-                   gpointer  user_data)
-{
-    gboolean *should_exist = user_data;
-
-    if (*should_exist)
-    {
-        g_assert_true (g_file_query_exists (location, NULL));
-    }
-    else
-    {
-        g_assert_false (g_file_query_exists (location, NULL));
-    }
-}
-
-void
-file_hierarchy_assert_exists (const GStrv  hier,
-                              const gchar *substitution,
-                              gboolean     exists)
-{
-    file_hierarchy_foreach (hier,
-                            substitution,
-                            assert_file_exist,
-                            (gpointer) & exists);
-}
-
-void
-file_hierarchy_delete (const GStrv  hier,
-                       const gchar *substitution)
+delete_hierarchy_from_template (const GStrv  hier,
+                                const gchar *substitution)
 {
     const gchar *root_path = test_get_tmp_dir ();
     guint len = g_strv_length (hier);
@@ -285,13 +167,13 @@ const GStrv search_hierarchy = (char *[])
 void
 create_search_file_hierarchy (gchar *search_engine)
 {
-    file_hierarchy_create (search_hierarchy, search_engine);
+    create_hierarchy_from_template (search_hierarchy, search_engine);
 }
 
 void
 delete_search_file_hierarchy (gchar *search_engine)
 {
-    file_hierarchy_delete (search_hierarchy, search_engine);
+    delete_hierarchy_from_template (search_hierarchy, search_engine);
 }
 
 /* This undoes the last operation blocking the current main thread. */
@@ -312,32 +194,6 @@ test_operation_undo (void)
                                            loop);
 
     nautilus_file_undo_manager_undo (NULL, NULL);
-
-    g_main_loop_run (loop);
-
-    g_main_context_pop_thread_default (context);
-
-    g_signal_handler_disconnect (nautilus_file_undo_manager_get (),
-                                 handler_id);
-}
-
-void
-test_operation_redo (void)
-{
-    g_autoptr (GMainLoop) loop = NULL;
-    g_autoptr (GMainContext) context = NULL;
-    gulong handler_id;
-
-    context = g_main_context_new ();
-    g_main_context_push_thread_default (context);
-    loop = g_main_loop_new (context, FALSE);
-
-    handler_id = g_signal_connect_swapped (nautilus_file_undo_manager_get (),
-                                           "undo-changed",
-                                           G_CALLBACK (g_main_loop_quit),
-                                           loop);
-
-    nautilus_file_undo_manager_redo (NULL, NULL);
 
     g_main_loop_run (loop);
 
@@ -376,32 +232,87 @@ test_operation_undo_redo (void)
                                  handler_id);
 }
 
+/* Creates the following hierarchy:
+ * /tmp/`prefix`_first_dir/`prefix`_first_dir_child
+ * /tmp/`prefix`_second_dir/
+ */
 void
 create_one_file (gchar *prefix)
 {
-    const GStrv files_hier = (char *[])
-    {
-        "%s_first_dir/",
-        "%s_first_dir/%s_first_dir_child",
-        "%s_second_dir/",
-        NULL
-    };
+    g_autoptr (GFile) root = NULL;
+    g_autoptr (GFile) first_dir = NULL;
+    g_autoptr (GFile) second_dir = NULL;
+    g_autoptr (GFile) file = NULL;
+    GFileOutputStream *out;
+    gchar *file_name;
 
-    file_hierarchy_create (files_hier, prefix);
+    root = g_file_new_for_path (test_get_tmp_dir ());
+    g_assert_true (g_file_query_exists (root, NULL));
+
+    file_name = g_strdup_printf ("%s_first_dir", prefix);
+    first_dir = g_file_get_child (root, file_name);
+    g_free (file_name);
+
+    g_file_make_directory (first_dir, NULL, NULL);
+
+    file_name = g_strdup_printf ("%s_first_dir_child", prefix);
+    file = g_file_get_child (first_dir, file_name);
+    g_free (file_name);
+
+    out = g_file_create (file, G_FILE_CREATE_NONE, NULL, NULL);
+    g_object_unref (out);
+
+    file_name = g_strdup_printf ("%s_second_dir", prefix);
+    second_dir = g_file_get_child (root, file_name);
+    g_free (file_name);
+
+    g_file_make_directory (second_dir, NULL, NULL);
 }
 
+/* Creates the same hierarchy as above, but all files being directories. */
 void
 create_one_empty_directory (gchar *prefix)
 {
-    const GStrv files_hier = (char *[])
-    {
-        "%s_first_dir/",
-        "%s_first_dir/%s_first_dir_child/",
-        "%s_second_dir/",
-        NULL
-    };
+    g_autoptr (GFile) root = NULL;
+    g_autoptr (GFile) first_dir = NULL;
+    g_autoptr (GFile) second_dir = NULL;
+    g_autoptr (GFile) file = NULL;
+    gchar *file_name;
 
-    file_hierarchy_create (files_hier, prefix);
+    root = g_file_new_for_path (test_get_tmp_dir ());
+    g_assert_true (g_file_query_exists (root, NULL));
+
+    file_name = g_strdup_printf ("%s_first_dir", prefix);
+    first_dir = g_file_get_child (root, file_name);
+    g_free (file_name);
+
+    g_file_make_directory (first_dir, NULL, NULL);
+
+    file_name = g_strdup_printf ("%s_first_dir_child", prefix);
+    file = g_file_get_child (first_dir, file_name);
+    g_free (file_name);
+
+    g_file_make_directory (file, NULL, NULL);
+
+    file_name = g_strdup_printf ("%s_second_dir", prefix);
+    second_dir = g_file_get_child (root, file_name);
+    g_free (file_name);
+
+    g_file_make_directory (second_dir, NULL, NULL);
+}
+
+static void
+create_file_cb (GObject      *source_object,
+                GAsyncResult *res,
+                gpointer      data)
+{
+    g_autoptr (GError) error = NULL;
+    g_autoptr (GFileOutputStream) out = g_file_create_finish (G_FILE (source_object), res, &error);
+    guint *count = data;
+
+    g_assert_no_error (error);
+
+    (*count)++;
 }
 
 void
@@ -411,28 +322,50 @@ create_multiple_files (gchar *prefix,
     g_autoptr (GFile) root = NULL;
     g_autoptr (GFile) dir = NULL;
     gchar *file_name;
+    guint count = 0;
 
     root = g_file_new_for_path (test_get_tmp_dir ());
     g_assert_true (g_file_query_exists (root, NULL));
 
     for (guint i = 0; i < number_of_files; i++)
     {
-        GFileOutputStream *out;
         g_autoptr (GFile) file = NULL;
 
         file_name = g_strdup_printf ("%s_file_%i", prefix, i);
         file = g_file_get_child (root, file_name);
         g_free (file_name);
 
-        out = g_file_create (file, G_FILE_CREATE_NONE, NULL, NULL);
-        g_object_unref (out);
+        g_file_create_async (file, G_FILE_CREATE_NONE, G_PRIORITY_DEFAULT,
+                             NULL, create_file_cb, &count);
+
+        if ((i + 1) % ASYNC_FILE_LIMIT == 0)
+        {
+            /* Need to rate limit the number of open files */
+            ITER_CONTEXT_WHILE (count < i);
+        }
     }
+
+    ITER_CONTEXT_WHILE (count < number_of_files);
 
     file_name = g_strdup_printf ("%s_dir", prefix);
     dir = g_file_get_child (root, file_name);
     g_free (file_name);
 
     g_file_make_directory (dir, NULL, NULL);
+}
+
+static void
+create_dir_cb (GObject      *source_object,
+               GAsyncResult *res,
+               gpointer      data)
+{
+    g_autoptr (GError) error = NULL;
+    g_file_make_directory_finish (G_FILE (source_object), res, &error);
+    guint *count = data;
+
+    g_assert_no_error (error);
+
+    (*count)++;
 }
 
 void
@@ -442,6 +375,7 @@ create_multiple_directories (gchar *prefix,
     g_autoptr (GFile) root = NULL;
     g_autoptr (GFile) dir = NULL;
     gchar *file_name;
+    guint count = 0;
 
     root = g_file_new_for_path (test_get_tmp_dir ());
     g_assert_true (g_file_query_exists (root, NULL));
@@ -454,8 +388,17 @@ create_multiple_directories (gchar *prefix,
         file = g_file_get_child (root, file_name);
         g_free (file_name);
 
-        g_file_make_directory (file, NULL, NULL);
+        g_file_make_directory_async (file, G_PRIORITY_DEFAULT,
+                                     NULL, create_dir_cb, &count);
+
+        if ((i + 1) % ASYNC_FILE_LIMIT == 0)
+        {
+            /* Need to rate limit the number of open files */
+            ITER_CONTEXT_WHILE (count < i);
+        }
     }
+
+    ITER_CONTEXT_WHILE (count < number_of_directories);
 
     file_name = g_strdup_printf ("%s_destination_dir", prefix);
     dir = g_file_get_child (root, file_name);
@@ -477,7 +420,7 @@ create_first_hierarchy (gchar *prefix)
         NULL
     };
 
-    file_hierarchy_create (first_hierarchy, prefix);
+    create_hierarchy_from_template (first_hierarchy, prefix);
 }
 
 void
@@ -493,7 +436,7 @@ create_second_hierarchy (gchar *prefix)
         NULL
     };
 
-    file_hierarchy_create (second_hierarchy, prefix);
+    create_hierarchy_from_template (second_hierarchy, prefix);
 }
 
 void
@@ -512,7 +455,7 @@ create_third_hierarchy (gchar *prefix)
         NULL
     };
 
-    file_hierarchy_create (third_hierarchy, prefix);
+    create_hierarchy_from_template (third_hierarchy, prefix);
 }
 
 void
@@ -530,7 +473,7 @@ create_fourth_hierarchy (gchar *prefix)
         NULL
     };
 
-    file_hierarchy_create (fourth_hierarchy, prefix);
+    create_hierarchy_from_template (fourth_hierarchy, prefix);
 }
 
 void
@@ -559,74 +502,4 @@ create_multiple_full_directories (gchar *prefix,
 
         g_file_make_directory_with_parents (file, NULL, NULL);
     }
-}
-
-void
-create_random_file (GFile *file,
-                    gsize  size)
-{
-    const gsize max_chunk_size = 4096;
-    gchar random_buffer[max_chunk_size];
-    g_autoptr (GError) error = NULL;
-    g_autoptr (GFileOutputStream) stream = g_file_create (file,
-                                                          G_FILE_CREATE_NONE,
-                                                          NULL,
-                                                          &error);
-    g_assert_no_error (error);
-
-    for (gsize chunk_size = size >= max_chunk_size ? max_chunk_size : size;
-         chunk_size > 0;
-         chunk_size = size >= max_chunk_size ? max_chunk_size : size)
-    {
-        gssize written_size = getrandom (random_buffer, chunk_size, 0);
-
-        g_assert_cmpint (written_size, >, 0);
-
-        g_output_stream_write (G_OUTPUT_STREAM (stream), random_buffer, written_size, NULL, &error);
-        g_assert_no_error (error);
-
-        size -= written_size;
-    }
-}
-
-gboolean
-can_run_bwrap (void)
-{
-    g_autoptr (GError) error = NULL;
-    g_autoptr (GSubprocess) bwrap = g_subprocess_new (G_SUBPROCESS_FLAGS_NONE, &error,
-                                                      "bwrap",
-                                                      "--unshare-all",
-                                                      "--ro-bind", "/usr", "/usr",
-                                                      "--symlink", "usr/lib64", "/lib64",
-                                                      "/usr/bin/true",
-                                                      NULL);
-
-    if (!bwrap)
-    {
-        g_debug ("Could not exec bwrap: %s", error->message);
-        return FALSE;
-    }
-
-    if (!g_subprocess_wait (bwrap, NULL, &error))
-    {
-        g_debug ("Error waiting for bwrap process: %s", error->message);
-        return FALSE;
-    }
-
-
-    if (!g_subprocess_get_if_exited (bwrap))
-    {
-        g_debug ("bwrap did not exit normally");
-        return FALSE;
-    }
-
-    int code = g_subprocess_get_exit_status (bwrap);
-    if (code != 0)
-    {
-        g_debug ("bwrap exited with code %d", code);
-        return FALSE;
-    }
-
-    g_debug ("Detected working bwrap");
-    return TRUE;
 }

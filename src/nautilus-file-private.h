@@ -21,9 +21,10 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
+#include "nautilus-directory.h"
 #include "nautilus-file.h"
+#include "nautilus-monitor.h"
+#include "nautilus-file-undo-operations.h"
 
 #define NAUTILUS_FILE_DEFAULT_ATTRIBUTES				\
 	"standard::*,access::*,mountable::*,time::*,unix::*,owner::*,selinux::*,id::filesystem,trash::orig-path,trash::deletion-date,metadata::*,recent::*,preview::icon"
@@ -90,6 +91,8 @@ struct NautilusFilePrivate
 	GdkTexture *thumbnail;
 	time_t thumbnail_mtime;
 
+	/* Info you might get from a link (.desktop, .directory or nautilus link) */
+	GIcon *custom_icon;
 	char *activation_uri;
 
 	/* used during DND, for checking whether source and destination are on
@@ -246,6 +249,8 @@ gboolean      nautilus_file_set_display_name               (NautilusFile        
 							    const char             *display_name,
 							    const char             *edit_name,
 							    gboolean                custom);
+NautilusDirectory *
+              nautilus_file_get_directory                  (NautilusFile           *file);
 void          nautilus_file_set_directory                  (NautilusFile           *file,
 							    NautilusDirectory      *directory);
 void          nautilus_file_set_mount                      (NautilusFile           *file,

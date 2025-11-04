@@ -25,13 +25,12 @@
 
 #include "nautilus-error-reporting.h"
 
-#include "nautilus-file.h"
-#include "nautilus-ui-utilities.h"
-
 #include <string.h>
 #include <glib/gi18n.h>
 #include "nautilus-file.h"
 #include <eel/eel-stock-dialogs.h>
+
+#include "nautilus-ui-utilities.h"
 
 #define NEW_NAME_TAG "Nautilus: new name"
 
@@ -273,12 +272,16 @@ nautilus_report_error_renaming_file (NautilusFile *file,
             case G_IO_ERROR_INVALID_FILENAME:
             {
                 const char *invalid_chars = FAT_FORBIDDEN_CHARACTERS;
-                const char *forbidden_char = strpbrk (new_name, invalid_chars);
-                if (forbidden_char != NULL)
+
+                for (guint i = 0; i < strlen (invalid_chars); i++)
                 {
-                    message = g_strdup_printf (_("The name “%s” is not valid because it contains the character “%c”. "
-                                                 "Please use a different name."),
-                                               truncated_new_name, *forbidden_char);
+                    if (strchr (new_name, invalid_chars[i]) != NULL)
+                    {
+                        message = g_strdup_printf (_("The name “%s” is not valid because it contains the character “%c”. "
+                                                     "Please use a different name."),
+                                                   truncated_new_name, invalid_chars[i]);
+                        break;
+                    }
                 }
                 if (message == NULL)
                 {

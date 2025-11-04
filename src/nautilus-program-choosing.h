@@ -23,16 +23,15 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+#include "nautilus-file.h"
 
 typedef void (*NautilusApplicationChoiceCallback)   (GAppInfo                          *application,
                                                      gpointer                           callback_data);
 
 void nautilus_launch_application                    (GAppInfo                          *application,
-                                                     NautilusFileList                  *files,
+                                                     GList                             *files,
                                                      GtkWindow                         *parent_window);
 void nautilus_launch_application_by_uri             (GAppInfo                          *application,
                                                      GList                             *uris,

@@ -21,11 +21,9 @@
 
 #pragma once
 
-#include "nautilus-search-provider.h"
+#include "nautilus-search-engine.h"
 
-#include <glib-object.h>
+#define NAUTILUS_TYPE_SEARCH_ENGINE_TRACKER (nautilus_search_engine_tracker_get_type ())
+G_DECLARE_FINAL_TYPE (NautilusSearchEngineTracker, nautilus_search_engine_tracker, NAUTILUS, SEARCH_ENGINE_TRACKER, GObject)
 
-#define NAUTILUS_TYPE_SEARCH_ENGINE_LOCALSEARCH (nautilus_search_engine_localsearch_get_type ())
-G_DECLARE_FINAL_TYPE (NautilusSearchEngineLocalsearch, nautilus_search_engine_localsearch, NAUTILUS, SEARCH_ENGINE_LOCALSEARCH, GObject)
-
-NautilusSearchEngineLocalsearch* nautilus_search_engine_localsearch_new (void);
+NautilusSearchEngineTracker* nautilus_search_engine_tracker_new (void);

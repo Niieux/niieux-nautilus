@@ -24,7 +24,6 @@
 #include <string.h>
 
 #include "nautilus-dbus-launcher.h"
-#include "nautilus-file.h"
 #include "nautilus-file-operations.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-global-preferences.h"

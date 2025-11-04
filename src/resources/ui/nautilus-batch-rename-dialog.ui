@@ -91,25 +91,12 @@
       </item>
     </section>
   </menu>
-  <template class="NautilusBatchRenameDialog" parent="AdwDialog">
-    <property name="width-request">360</property>
-    <property name="height-request">300</property>
-    <property name="content-height">600</property>
-    <property name="content-width">600</property>
-
-    <child>
-      <object class="AdwBreakpoint" id="narrow_breakpoint">
-        <condition>max-width: 480sp</condition>
-        <setter object="stack_switcher" property="halign">start</setter>
-        <setter object="stack_switcher" property="orientation">vertical</setter>
-        <setter object="numbering_box" property="orientation">vertical</setter>
-      </object>
-    </child>
-
-    <property name="child">
-      <object class="AdwToolbarView" id="toolbar_view">
-        <property name="reveal-bottom-bars">False</property>
-        <property name="bottom-bar-style">raised</property>
+  <template class="NautilusBatchRenameDialog" parent="AdwWindow">
+    <property name="modal">True</property>
+    <property name="height-request">563</property>
+    <property name="destroy_with_parent">True</property>
+    <property name="content">
+      <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
             <property name="show-start-title-buttons">False</property>
@@ -136,20 +123,19 @@
         <property name="content">
           <object class="GtkBox">
             <child>
-              <object class="GtkBox">
-                <property name="orientation">vertical</property>
-                <property name="spacing">6</property>
+              <object class="GtkGrid" id="grid">
+                <property name="row-spacing">6</property>
+                <property name="column-spacing">6</property>
                 <property name="hexpand">True</property>
                 <child>
-                  <object class="GtkBox" id="stack_switcher">
-                    <property name="orientation">horizontal</property>
-                    <property name="spacing">12</property>
+                  <object class="GtkBox">
+                    <property name="spacing">15</property>
                     <property name="hexpand">True</property>
                     <property name="halign">center</property>
-                    <property name="margin-top">18</property>
-                    <property name="margin-bottom">18</property>
-                    <property name="margin-start">12</property>
-                    <property name="margin-end">12</property>
+                    <property name="margin-top">20</property>
+                    <property name="margin-bottom">20</property>
+                    <property name="margin-start">20</property>
+                    <property name="margin-end">20</property>
                     <child>
                       <object class="GtkCheckButton" id="format_mode_button">
                         <property name="label" translatable="yes">Rename _using a template</property>
@@ -166,6 +152,10 @@
                         <signal name="toggled" handler="batch_rename_dialog_mode_changed" swapped="yes"/>
                       </object>
                     </child>
+                    <layout>
+                      <property name="column">3</property>
+                      <property name="row">0</property>
+                    </layout>
                   </object>
                 </child>
                 <child>
@@ -179,39 +169,42 @@
                         <property name="name">format</property>
                         <property name="title" translatable="yes" comments="Translators: This is a noun, not a verb">Format</property>
                         <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">vertical</property>
-                            <property name="margin-start">18</property>
-                            <property name="margin-end">18</property>
-                            <property name="margin-bottom">12</property>
-                            <property name="spacing">12</property>
+                          <object class="GtkGrid" id="format_stack_child">
+                            <property name="margin-start">40</property>
+                            <property name="margin-end">40</property>
+                            <property name="margin-bottom">10</property>
+                            <property name="row-spacing">15</property>
+                            <property name="column-spacing">6</property>
                             <child>
-                              <object class="AdwClamp">
-                                <property name="child">
-                                  <object class="GtkBox">
-                                    <child>
-                                      <object class="GtkEntry" id="name_entry">
-                                        <property name="hexpand">True</property>
-                                        <property name="activates-default">True</property>
-                                        <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkMenuButton">
-                                        <property name="menu_model">add_tag_menu</property>
-                                        <property name="child">
-                                          <object class="AdwButtonContent">
-                                            <property name="icon-name">list-add-symbolic</property>
-                                            <property name="label" translatable="yes">Add</property>
-                                          </object>
-                                        </property>
-                                      </object>
-                                    </child>
-                                    <style>
-                                      <class name="linked"/>
-                                    </style>
+                              <object class="GtkBox">
+                                <property name="halign">center</property>
+                                <child>
+                                  <object class="GtkEntry" id="name_entry">
+                                    <property name="width_request">400</property>
+                                    <property name="hexpand">True</property>
+                                    <property name="activates-default">True</property>
+                                    <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
                                   </object>
-                                </property>
+                                </child>
+                                <child>
+                                  <object class="GtkMenuButton">
+                                    <property name="menu_model">add_tag_menu</property>
+                                    <property name="child">
+                                      <object class="AdwButtonContent">
+                                        <property name="icon-name">list-add-symbolic</property>
+                                        <property name="label" translatable="yes">Add</property>
+                                      </object>
+                                    </property>
+                                  </object>
+                                </child>
+                                <style>
+                                  <class name="linked"/>
+                                </style>
+                                <layout>
+                                  <property name="column">0</property>
+                                  <property name="row">0</property>
+                                  <property name="column-span">5</property>
+                                </layout>
                               </object>
                             </child>
                             <child>
@@ -219,8 +212,7 @@
                                 <property name="halign">center</property>
                                 <property name="child">
                                   <object class="GtkBox" id="numbering_box">
-                                    <property name="orientation">horizontal</property>
-                                    <property name="spacing">12</property>
+                                    <property name="spacing">10</property>
                                     <child>
                                       <object class="GtkLabel" id="numbering_label">
                                         <property name="label" translatable="yes">Automatic Numbering Order</property>
@@ -228,13 +220,17 @@
                                     </child>
                                     <child>
                                       <object class="GtkMenuButton" id="numbering_order_button">
-                                        <property name="label" translatable="yes">Original Name (Ascending)</property>
                                         <property name="menu-model">numbering_order_menu</property>
                                         <property name="always-show-arrow">True</property>
                                       </object>
                                     </child>
                                   </object>
                                 </property>
+                                <layout>
+                                  <property name="column">0</property>
+                                  <property name="row">1</property>
+                                  <property name="column-span">5</property>
+                                </layout>
                               </object>
                             </child>
                           </object>
@@ -246,233 +242,178 @@
                         <property name="name">replace</property>
                         <property name="title" translatable="yes" context="title">Replace</property>
                         <property name="child">
-                          <object class="AdwClamp">
-                            <property name="child">
-                              <object class="GtkGrid" id="replace_stack_child">
-                                <property name="margin-start">18</property>
-                                <property name="margin-end">18</property>
-                                <property name="margin-bottom">12</property>
-                                <property name="hexpand">True</property>
-                                <property name="row-spacing">12</property>
-                                <property name="column-spacing">6</property>
-                                <child>
-                                  <object class="GtkLabel" id="existing_text_label">
-                                    <property name="label" translatable="yes">Existing Text</property>
-                                    <property name="sensitive">False</property>
-                                    <layout>
-                                      <property name="column">0</property>
-                                      <property name="row">0</property>
-                                    </layout>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkEntry" id="find_entry">
-                                    <property name="hexpand">True</property>
-                                    <property name="activates-default">True</property>
-                                    <signal name="changed" handler="file_names_widget_entry_on_changed" swapped="yes"/>
-                                    <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
-                                    <layout>
-                                      <property name="column">1</property>
-                                      <property name="row">0</property>
-                                      <property name="column-span">3</property>
-                                    </layout>
-                                    <accessibility>
-                                      <relation name="labelled-by">existing_text_label</relation>
-                                    </accessibility>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkLabel" id="replace_label">
-                                    <property name="label" translatable="yes">Replace With</property>
-                                    <property name="sensitive">False</property>
-                                    <layout>
-                                      <property name="column">0</property>
-                                      <property name="row">1</property>
-                                    </layout>
-                                  </object>
-                                </child>
-                                <child>
-                                  <object class="GtkEntry" id="replace_entry">
-                                    <property name="hexpand">True</property>
-                                    <signal name="changed" handler="file_names_widget_entry_on_changed" swapped="yes"/>
-                                    <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
-                                    <layout>
-                                      <property name="column">1</property>
-                                      <property name="row">1</property>
-                                      <property name="column-span">3</property>
-                                    </layout>
-                                    <accessibility>
-                                      <relation name="labelled-by">replace_label</relation>
-                                    </accessibility>
-                                  </object>
-                                </child>
+                          <object class="GtkGrid" id="replace_stack_child">
+                            <property name="margin-start">40</property>
+                            <property name="margin-end">40</property>
+                            <property name="margin-bottom">10</property>
+                            <property name="hexpand">True</property>
+                            <property name="halign">center</property>
+                            <property name="row-spacing">15</property>
+                            <property name="column-spacing">6</property>
+                            <child>
+                              <object class="GtkLabel" id="existing_text_label">
+                                <property name="label" translatable="yes">Existing Text</property>
+                                <property name="sensitive">False</property>
+                                <layout>
+                                  <property name="column">0</property>
+                                  <property name="row">0</property>
+                                </layout>
                               </object>
-                            </property>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="find_entry">
+                                <property name="width_request">375</property>
+                                <property name="activates-default">True</property>
+                                <signal name="changed" handler="file_names_widget_entry_on_changed" swapped="yes"/>
+                                <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
+                                <layout>
+                                  <property name="column">1</property>
+                                  <property name="row">0</property>
+                                  <property name="column-span">3</property>
+                                </layout>
+                                <accessibility>
+                                  <relation name="labelled-by">existing_text_label</relation>
+                                </accessibility>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="replace_label">
+                                <property name="label" translatable="yes">Replace With</property>
+                                <property name="sensitive">False</property>
+                                <layout>
+                                  <property name="column">0</property>
+                                  <property name="row">1</property>
+                                </layout>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkEntry" id="replace_entry">
+                                <property name="width_request">375</property>
+                                <signal name="changed" handler="file_names_widget_entry_on_changed" swapped="yes"/>
+                                <signal name="activate" handler="file_names_widget_on_activate" swapped="yes"/>
+                                <layout>
+                                  <property name="column">1</property>
+                                  <property name="row">1</property>
+                                  <property name="column-span">3</property>
+                                </layout>
+                                <accessibility>
+                                  <relation name="labelled-by">replace_label</relation>
+                                </accessibility>
+                              </object>
+                            </child>
                           </object>
                         </property>
                       </object>
                     </child>
+                    <layout>
+                      <property name="column">0</property>
+                      <property name="row">1</property>
+                      <property name="column-span">8</property>
+                    </layout>
                   </object>
                 </child>
                 <child>
                   <object class="GtkScrolledWindow" id="scrolled_window">
                     <property name="hexpand">False</property>
                     <property name="vexpand">True</property>
-                    <property name="max-content-height">300</property>
-                    <property name="min-content-height">240</property>
+                    <property name="max-content-height">250</property>
+                    <property name="min-content-height">250</property>
                     <property name="max-content-width">600</property>
-                    <property name="min-content-width">360</property>
+                    <property name="min-content-width">600</property>
                     <style>
                       <class name="batch-rename-preview"/>
                     </style>
                     <property name="child">
-                      <object class="GtkListView" id="batch_listview">
-                        <property name="factory">
-                          <object class="GtkBuilderListItemFactory">
-                            <property name="bytes"><![CDATA[
-<?xml version="1.0" encoding="UTF-8"?>
-<interface>
-  <template class="GtkListItem">
-    <property name="child">
-      <object class="GtkBox" id="batch_row">
-        <binding name="orientation">
-          <closure type="GtkOrientation" function="batch_row_orientation">
-            <lookup name="current-breakpoint" type="NautilusBatchRenameDialog">
-              <lookup name="dialog" type="NautilusBatchRenameItem">
-                <lookup name="item" type="GtkListItem"/>
-              </lookup>
-            </lookup>
-            <lookup name="dialog" type="NautilusBatchRenameItem">
-              <lookup name="item" type="GtkListItem"/>
-            </lookup>
-          </closure>
-        </binding>
-        <property name="spacing">6</property>
-        <binding name="css-classes">
-          <closure type="GStrv" function="batch_row_conflict_css_name">
-            <lookup name="has-conflict" type="NautilusBatchRenameItem">
-              <lookup name="item" type="GtkListItem"/>
-            </lookup>
-          </closure>
-        </binding>
-        <child>
-          <object class="GtkLabel" id="original_name_label">
-            <property name="hexpand">True</property>
-            <property name="xalign">0</property>
-            <property name="use-markup">True</property>
-            <property name="ellipsize">end</property>
-            <binding name="label">
-              <lookup name="name-before" type="NautilusBatchRenameItem">
-                <lookup name="item" type="GtkListItem"/>
-              </lookup>
-            </binding>
-            <binding name="tooltip-markup">
-              <lookup name="name-before" type="NautilusBatchRenameItem">
-                <lookup name="item" type="GtkListItem"/>
-              </lookup>
-            </binding>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">horizontal</property>
-            <property name="spacing">6</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">arrow-next-symbolic</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="result_label">
-                <property name="hexpand">True</property>
-                <property name="xalign">0</property>
-                <property name="use-markup">True</property>
-                <property name="ellipsize">end</property>
-                <binding name="label">
-                  <lookup name="name-after" type="NautilusBatchRenameItem">
-                    <lookup name="item" type="GtkListItem"/>
-                  </lookup>
-                </binding>
-                <binding name="tooltip-markup">
-                  <lookup name="name-after" type="NautilusBatchRenameItem">
-                    <lookup name="item" type="GtkListItem"/>
-                  </lookup>
-                </binding>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </property>
-  </template>
-  <object class="GtkSizeGroup">
-    <property name="mode">horizontal</property>
-    <widgets>
-      <widget name="original_name_label"/>
-      <widget name="result_label"/>
-    </widgets>
-  </object>
-</interface>
-                              ]]></property>
-                          </object>
-                        </property>
-                        <property name="show-separators">True</property>
-                        <property name="model">
-                          <object class="GtkNoSelection">
-                            <property name="model">
-                              <object class="GListStore" id="batch_listmodel">
-                                <property name="item-type">NautilusBatchRenameItem</property>
+                      <object class="GtkViewport">
+                        <property name="child">
+                          <object class="GtkBox" id="a_box">
+                            <child>
+                              <object class="GtkListBox" id="original_name_listbox">
+                                <property name="hexpand">True</property>
+                                <property name="selection_mode">GTK_SELECTION_NONE</property>
                               </object>
-                            </property>
+                            </child>
+                            <child>
+                              <object class="GtkListBox" id="arrow_listbox">
+                                <property name="selection_mode">GTK_SELECTION_NONE</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkListBox" id="result_listbox">
+                                <property name="hexpand">True</property>
+                                <property name="selection_mode">GTK_SELECTION_NONE</property>
+                              </object>
+                            </child>
                           </object>
                         </property>
                       </object>
                     </property>
+                    <layout>
+                      <property name="column">0</property>
+                      <property name="row">2</property>
+                      <property name="column-span">8</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="conflict_box">
+                    <property name="spacing">6</property>
+                    <property name="visible">False</property>
+                    <property name="margin-start">6</property>
+                    <child>
+                      <object class="GtkLabel" id="conflict_label">
+                        <property name="hexpand">True</property>
+                        <property name="xalign">0</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <child>
+                          <object class="GtkButton" id="conflict_down">
+                            <property name="icon-name">go-down-symbolic</property>
+                            <property name="tooltip-text">Next Conflict</property>
+                            <signal name="clicked" handler="select_next_conflict_down" swapped="yes"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="conflict_up">
+                            <property name="icon-name">go-up-symbolic</property>
+                            <property name="tooltip-text">Previous Conflict</property>
+                            <signal name="clicked" handler="select_next_conflict_up" swapped="yes"/>
+                            <style>
+                              <class name="flat"/>
+                            </style>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <layout>
+                      <property name="column">0</property>
+                      <property name="row">3</property>
+                      <property name="column-span">8</property>
+                    </layout>
                   </object>
                 </child>
               </object>
             </child>
           </object>
         </property>
-        <child type="bottom">
-          <object class="GtkBox">
-            <style>
-              <class name="toolbar"/>
-            </style>
-            <child>
-              <object class="GtkLabel" id="conflict_label">
-                <property name="hexpand">True</property>
-                <property name="xalign">0</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <child>
-                  <object class="GtkButton" id="conflict_down">
-                    <property name="icon-name">go-down-symbolic</property>
-                    <property name="tooltip-text" translatable="yes">Next Conflict</property>
-                    <signal name="clicked" handler="select_next_conflict_down" swapped="yes"/>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="conflict_up">
-                    <property name="icon-name">go-up-symbolic</property>
-                    <property name="tooltip-text" translatable="yes">Previous Conflict</property>
-                    <signal name="clicked" handler="select_next_conflict_up" swapped="yes"/>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
+      </object>
+    </property>
+    <child>
+      <object class="GtkShortcutController">
+        <property name="scope">managed</property>
+        <child>
+          <object class="GtkShortcut">
+            <property name="trigger">Escape</property>
+            <property name="action">action(window.close)</property>
           </object>
         </child>
       </object>
-    </property>
+    </child>
   </template>
   <object class="GtkImage" id="done_image">
     <property name="icon_name">object-select-symbolic</property>

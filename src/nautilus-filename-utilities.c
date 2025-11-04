@@ -9,7 +9,8 @@
 #include <glib.h>
 #include <glib/gi18n.h>
 #include <stdio.h>
-#include <string.h>
+
+#include <stdio.h>
 
 
 typedef gboolean (* AppendixParser) (const char *appendix,
@@ -336,7 +337,7 @@ nautilus_filename_get_extension (const char *filename)
     /* basename must have at least one char */
     const char *start = g_utf8_next_char (filename);
     size_t search_length = strlen (start);
-    const char *extension = memrchr (start, '.', search_length);
+    gchar *extension = g_utf8_strrchr (start, search_length, '.');
 
     if (extension == NULL || *g_utf8_next_char (extension) == '\0')
     {

@@ -6,8 +6,6 @@
 
 #include "nautilus-view-item.h"
 
-#include "nautilus-file.h"
-
 struct _NautilusViewItem
 {
     GObject parent_instance;

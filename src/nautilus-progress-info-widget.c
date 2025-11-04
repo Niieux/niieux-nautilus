@@ -21,13 +21,10 @@
  *
  */
 
-#include "config.h"
-#include "nautilus-progress-info-widget.h"
-
-#include "nautilus-progress-info.h"
-
+#include <config.h>
 #include <glib/gi18n.h>
 
+#include "nautilus-progress-info-widget.h"
 struct _NautilusProgressInfoWidgetPrivate
 {
     NautilusProgressInfo *info;

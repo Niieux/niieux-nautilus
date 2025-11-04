@@ -6,19 +6,20 @@
 
 #pragma once
 
-#include "nautilus-types.h"
+#include <adwaita.h>
 
-#include <gtk/gtk.h>
+#include "nautilus-types.h"
+#include "nautilus-view-item.h"
 
 G_BEGIN_DECLS
 
 #define NAUTILUS_TYPE_VIEW_CELL (nautilus_view_cell_get_type())
 
-G_DECLARE_DERIVABLE_TYPE (NautilusViewCell, nautilus_view_cell, NAUTILUS, VIEW_CELL, GtkWidget)
+G_DECLARE_DERIVABLE_TYPE (NautilusViewCell, nautilus_view_cell, NAUTILUS, VIEW_CELL, AdwBin)
 
 struct _NautilusViewCellClass
 {
-    GtkWidgetClass parent_class;
+    AdwBinClass parent_class;
 };
 
 NautilusListBase *nautilus_view_cell_get_view (NautilusViewCell *self);

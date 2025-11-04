@@ -122,7 +122,7 @@ append_basic_info (NautilusImagesPropertiesModel *self)
 
     if (self->md_ready)
     {
-        orientation = gexiv2_metadata_get_orientation (self->md, NULL);
+        orientation = gexiv2_metadata_try_get_orientation (self->md, NULL);
     }
 
     if (orientation == GEXIV2_ORIENTATION_ROT_90
@@ -187,15 +187,15 @@ append_gexiv2_tag (NautilusImagesPropertiesModel  *self,
 
     for (const char **i = tag_names; *i != NULL; i++)
     {
-        if (gexiv2_metadata_has_tag (self->md, *i, NULL))
+        if (gexiv2_metadata_try_has_tag (self->md, *i, NULL))
         {
-            g_autofree char *tag_value = gexiv2_metadata_get_tag_interpreted_string (self->md,
-                                                                                     *i,
-                                                                                     NULL);
+            g_autofree char *tag_value = NULL;
+
+            tag_value = gexiv2_metadata_try_get_tag_interpreted_string (self->md, *i, NULL);
 
             if (tag_description == NULL)
             {
-                tag_description = gexiv2_metadata_get_tag_description (*i, NULL);
+                tag_description = gexiv2_metadata_try_get_tag_description (*i, NULL);
             }
 
             /* don't add empty tags - try next one */
@@ -243,29 +243,22 @@ append_gexiv2_info (NautilusImagesPropertiesModel *self)
     append_gexiv2_tag (self, rights, _("Copyright"));
     append_gexiv2_tag (self, rating, _("Rating"));
 
-    gexiv2_metadata_get_gps_info (self->md, &longitude, &latitude, &altitude, NULL);
-
-    if (isnan (longitude) == 0 && isinf (longitude) == 0 &&
-        isnan (latitude) == 0 && isinf (latitude) == 0)
+    if (gexiv2_metadata_try_get_gps_info (self->md, &longitude, &latitude, &altitude, NULL))
     {
-        g_autoptr (GString) gps_coords = g_string_new ("");
+        g_autofree char *gps_coords = NULL;
 
-        g_string_append_printf (gps_coords, "%f° %s %f° %s",
-                                latitude,
-                                /* Translators: "N" and "S" stand for
-                                 * north and south in GPS coordinates. */
-                                latitude >= 0 ? _("N") : _("S"),
-                                longitude,
-                                /* Translators: "E" and "W" stand for
-                                 * east and west in GPS coordinates. */
-                                longitude >= 0 ? _("E") : _("W"));
+        gps_coords = g_strdup_printf ("%f° %s %f° %s (%.0f m)",
+                                      fabs (latitude),
+                                      /* Translators: "N" and "S" stand for
+                                       * north and south in GPS coordinates. */
+                                      latitude >= 0 ? _("N") : _("S"),
+                                      fabs (longitude),
+                                      /* Translators: "E" and "W" stand for
+                                       * east and west in GPS coordinates. */
+                                      longitude >= 0 ? _("E") : _("W"),
+                                      altitude);
 
-        if (isnan (altitude) == 0 && isinf (altitude) == 0)
-        {
-            g_string_append_printf (gps_coords, " (%.0f m)", altitude);
-        }
-
-        append_item (self, _("Coordinates"), gps_coords->str);
+        append_item (self, _("Coordinates"), gps_coords);
     }
 }
 
@@ -447,8 +440,6 @@ file_open_callback (GObject      *object,
         g_warning ("Error reading %s: %s", uri, error->message);
         load_finished (self);
     }
-
-    g_object_unref (data->file_info);
 }
 
 static void
@@ -496,7 +487,7 @@ nautilus_image_properties_model_load_from_file_info (NautilusImagesPropertiesMod
     data = g_new0 (FileOpenData, 1);
 
     data->self = self;
-    data->file_info = g_object_ref (file_info);
+    data->file_info = file_info;
 
     g_file_read_async (file,
                        G_PRIORITY_DEFAULT,

@@ -1,5 +1,5 @@
 {
-  "app-id": "org.gnome.Nautilus.Devel",
+  "app-id": "org.gnome.NautilusDevel",
   "runtime": "org.gnome.Platform",
   "runtime-version": "master",
   "sdk": "org.gnome.Sdk",
@@ -39,23 +39,6 @@
   ],
   "modules": [
     {
-      "name": "inih",
-      "buildsystem": "meson",
-      "config-opts": [
-        "-Ddefault_library=shared",
-        "-Ddistro_install=true",
-        "-Dwith_INIReader=true",
-        "-Dtests=false"
-      ],
-      "sources": [
-        {
-          "type": "archive",
-          "url": "https://github.com/benhoyt/inih/archive/refs/tags/r62.tar.gz",
-          "sha256": "9c15fa751bb8093d042dae1b9f125eb45198c32c6704cd5481ccde460d4f8151"
-        }
-      ]
-    },
-    {
       "name": "exiv2",
       "config-opts": [
         "-DCMAKE_INSTALL_PREFIX=/app",
@@ -66,7 +49,7 @@
         {
           "type": "git",
           "url": "https://github.com/Exiv2/exiv2.git",
-          "branch": "0.28.x"
+          "branch": "0.27-maintenance"
         }
       ]
     },
@@ -85,7 +68,7 @@
         {
           "type": "git",
           "url": "https://gitlab.gnome.org/GNOME/gexiv2.git",
-          "tag": "0.16.0"
+          "tag": "gexiv2-0.14.2"
         }
       ]
     },
@@ -103,7 +86,7 @@
       "config-opts": [
         "-Dfunctional_tests=false",
         "-Dsandbox_tests=false",
-        "-Ddomain_prefix=org.gnome.Nautilus.Devel",
+        "-Ddomain_prefix=org.gnome.NautilusDevel",
         "-Dextract=true",
         "-Dlandlock=disabled",
         "-Dman=false",
@@ -112,11 +95,6 @@
         "-Dsystemd_user_services=false",
         "-Dwriteback=false",
         "-Dbattery_detection=none"
-      ],
-      "post-install": [
-        "echo 'Removing quotations from DBus service files'",
-        "ls -alh /app/share/dbus-1/services/org.*",
-        "sed -i 's/\"//g' /app/share/dbus-1/services/org.*"
       ],
       "sources": [
         {

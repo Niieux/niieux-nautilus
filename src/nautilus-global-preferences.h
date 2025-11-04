@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "nautilus-global-preferences.h"
 #include <gio/gio.h>
 
 G_BEGIN_DECLS

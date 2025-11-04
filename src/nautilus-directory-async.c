@@ -31,9 +31,7 @@
 #include "nautilus-global-preferences.h"
 #include "nautilus-hash-queue.h"
 #include "nautilus-metadata.h"
-#include "nautilus-monitor.h"
 #include "nautilus-signaller.h"
-#include "nautilus-thumbnails.h"
 
 /* turn this on to check if async. job calls are balanced */
 #if 0
@@ -1823,33 +1821,35 @@ call_ready_callbacks_at_idle (gpointer callback_data)
 {
     /* Ensure the directory is alive until the end of this scope */
     g_autoptr (NautilusDirectory) directory = nautilus_directory_ref (NAUTILUS_DIRECTORY (callback_data));
-    GHashTableIter hash_iter;
-    GList *node;
+    g_autoptr (GPtrArray) values = NULL;
 
+    /* Steal all ready callbacks, new callbacks will end up in empty table. */
+    values = g_hash_table_steal_all_values (directory->details->call_when_ready_hash.ready);
     directory->details->call_ready_idle_id = 0;
 
-    if (g_hash_table_size (directory->details->call_when_ready_hash.ready) == 0)
+    if (values->len == 0)
     {
         /* Return early in case all ready callbacks were cancelled, don't emit state change */
         return;
     }
 
-    g_hash_table_iter_init (&hash_iter, directory->details->call_when_ready_hash.ready);
-
-    /* Check if any callbacks are ready and call them if they are. */
-    while (g_hash_table_iter_next (&hash_iter, NULL, (gpointer *) &node))
+    for (guint i = 0; i < values->len; i++)
     {
-        ReadyCallback callback = *(ReadyCallback *) (node->data);
+        for (GList *node = values->pdata[i]; node != NULL; node = node->next)
+        {
+            ReadyCallback *callback = node->data;
 
-        /* Callbacks are one-shots, so remove it now. */
-        remove_callback_link (directory, node, TRUE);
+            request_counter_remove_request (directory->details->call_when_ready_counters,
+                                            callback->request);
 
-        /* Call the callback. */
-        ready_callback_call (directory, &callback);
+            ready_callback_call (directory, callback);
+        }
+    }
 
-        /* Need to parse the node from the hash table again because it might
-         * have been freed */
-        g_hash_table_iter_init (&hash_iter, directory->details->call_when_ready_hash.ready);
+    /* Cleanup */
+    for (guint i = 0; i < values->len; i++)
+    {
+        g_list_free_full (values->pdata[i], g_free);
     }
 
     nautilus_directory_async_state_changed (directory);
@@ -2607,6 +2607,16 @@ directory_count_start (NautilusDirectory *directory,
     }
     *doing_io = TRUE;
 
+    if (!nautilus_file_is_directory (file))
+    {
+        file->details->directory_count_is_up_to_date = TRUE;
+        file->details->directory_count_failed = FALSE;
+        file->details->got_directory_count = FALSE;
+
+        nautilus_directory_async_state_changed (directory);
+        return;
+    }
+
     if (!async_job_start (directory, "directory count"))
     {
         return;
@@ -3277,48 +3287,26 @@ thumbnail_info_start (NautilusDirectory *directory,
                              state);
 }
 
-static void
-scale_down_when_large (GdkPixbuf **pixbuf)
-{
-    gint width = gdk_pixbuf_get_width (*pixbuf), height = gdk_pixbuf_get_height (*pixbuf);
-    gint biggest_dimension = MAX (width, height);
-    gint max_size = nautilus_thumbnail_get_max_size ();
-
-    if (biggest_dimension <= max_size)
-    {
-        return;
-    }
-
-    gboolean wide = width > height;
-    double scale = (double) max_size / (double) biggest_dimension;
-    gint new_width = wide ? max_size : width * scale;
-    gint new_height = wide ? height * scale : max_size;
-    GdkPixbuf *new_pixbuf = gdk_pixbuf_scale_simple (*pixbuf,
-                                                     new_width,
-                                                     new_height,
-                                                     GDK_INTERP_BILINEAR);
-
-    g_clear_object (pixbuf);
-    *pixbuf = new_pixbuf;
-}
-
 /* Currently, GDK Pixbuf will decode the image on the main thread, even when
  * using the async variant of the function. Until that is fixed, use a GTask to
  * perform the decoding in a different thread. */
 static void
-thumbnail_from_stream_thread (GTask        *task,
-                              gpointer      source_object,
-                              gpointer      task_data,
-                              GCancellable *cancellable)
+thumbnail_from_stream_at_scale_thread (GTask        *task,
+                                       gpointer      source_object,
+                                       gpointer      task_data,
+                                       GCancellable *cancellable)
 {
     GInputStream *self = source_object;
+    gint size = GPOINTER_TO_INT (task_data);
     GError *error = NULL;
-    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream (self, cancellable, &error);
+    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_stream_at_scale (self,
+                                                             size, size,
+                                                             TRUE,
+                                                             cancellable,
+                                                             &error);
 
     if (pixbuf != NULL)
     {
-        scale_down_when_large (&pixbuf);
-
         g_task_return_pointer (task, pixbuf, g_object_unref);
     }
     else
@@ -3328,20 +3316,22 @@ thumbnail_from_stream_thread (GTask        *task,
 }
 
 static void
-thumbnail_from_stream_async (GInputStream        *stream,
-                             GCancellable        *cancellable,
-                             GAsyncReadyCallback  callback,
-                             gpointer             user_data)
+thumbnail_from_stream_at_scale_async (GInputStream        *stream,
+                                      gint32               size,
+                                      GCancellable        *cancellable,
+                                      GAsyncReadyCallback  callback,
+                                      gpointer             user_data)
 {
     g_autoptr (GTask) task = NULL;
 
     task = g_task_new (stream, cancellable, callback, user_data);
-    g_task_run_in_thread (task, thumbnail_from_stream_thread);
+    g_task_set_task_data (task, GINT_TO_POINTER (size), NULL);
+    g_task_run_in_thread (task, thumbnail_from_stream_at_scale_thread);
 }
 
 static GdkPixbuf *
-thumbnail_from_stream_finish (GAsyncResult  *result,
-                              GError       **error)
+thumbnail_from_stream_at_scale_finish (GAsyncResult  *result,
+                                       GError       **error)
 {
     return g_task_propagate_pointer (G_TASK (result), error);
 }
@@ -3427,7 +3417,7 @@ thumbnail_pixbuf_ready_callback (GObject      *source_object,
         return;
     }
 
-    pixbuf = thumbnail_from_stream_finish (res, NULL);
+    pixbuf = thumbnail_from_stream_at_scale_finish (res, NULL);
 
     if (pixbuf)
     {
@@ -3467,10 +3457,17 @@ thumbnail_file_read_callback (GObject      *source_object,
 
     if (stream)
     {
-        thumbnail_from_stream_async (G_INPUT_STREAM (stream),
-                                     state->cancellable,
-                                     thumbnail_pixbuf_ready_callback,
-                                     state);
+        /* Scale very large images down to the max. size we need.
+         * cf. nautilus_file_get_icon() */
+        int max_thumbnail_size = NAUTILUS_GRID_ICON_SIZE_EXTRA_LARGE *
+                                 NAUTILUS_GRID_ICON_SIZE_MEDIUM /
+                                 NAUTILUS_GRID_ICON_SIZE_SMALL;
+
+        thumbnail_from_stream_at_scale_async (G_INPUT_STREAM (stream),
+                                              max_thumbnail_size,
+                                              state->cancellable,
+                                              thumbnail_pixbuf_ready_callback,
+                                              state);
     }
     else
     {

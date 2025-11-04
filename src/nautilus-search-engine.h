@@ -21,37 +21,29 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
 #include <glib-object.h>
+
+#include "nautilus-directory.h"
+#include "nautilus-search-engine-model.h"
+#include "nautilus-search-provider.h"
 
 G_BEGIN_DECLS
 
-typedef enum {
-    NAUTILUS_SEARCH_TYPE_LOCALSEARCH = 1 << 0,
-    NAUTILUS_SEARCH_TYPE_MODEL       = 1 << 1,
-    NAUTILUS_SEARCH_TYPE_RECENT      = 1 << 2,
-    NAUTILUS_SEARCH_TYPE_SIMPLE      = 1 << 3,
-
-    NAUTILUS_SEARCH_TYPE_FOLDER = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
-                                  NAUTILUS_SEARCH_TYPE_MODEL |
-                                  NAUTILUS_SEARCH_TYPE_SIMPLE,
-    /* This is used for both "Search Everywhere" and shell search provider. */
-    NAUTILUS_SEARCH_TYPE_GLOBAL = NAUTILUS_SEARCH_TYPE_LOCALSEARCH |
-                                  NAUTILUS_SEARCH_TYPE_RECENT,
-
-    NAUTILUS_SEARCH_TYPE_ALL    = NAUTILUS_SEARCH_TYPE_FOLDER | NAUTILUS_SEARCH_TYPE_GLOBAL,
-} NautilusSearchType;
-
 #define NAUTILUS_TYPE_SEARCH_ENGINE		(nautilus_search_engine_get_type ())
 
-G_DECLARE_FINAL_TYPE (NautilusSearchEngine, nautilus_search_engine, NAUTILUS, SEARCH_ENGINE, GObject)
+G_DECLARE_DERIVABLE_TYPE (NautilusSearchEngine, nautilus_search_engine, NAUTILUS, SEARCH_ENGINE, GObject)
 
-NautilusSearchEngine *
-nautilus_search_engine_new (NautilusSearchType search_type);
+struct _NautilusSearchEngineClass
+{
+  GObjectClass parent_class;
+};
 
-void
-nautilus_search_engine_set_search_type (NautilusSearchEngine *self,
-                                        NautilusSearchType search_type);
+NautilusSearchEngine *nautilus_search_engine_new                (void);
+NautilusSearchEngineModel *
+                      nautilus_search_engine_get_model_provider (NautilusSearchEngine *engine);
+void                  nautilus_search_engine_enable_recent (NautilusSearchEngine *engine);
 
 G_END_DECLS
+
+void nautilus_search_engine_start_by_target (NautilusSearchProvider     *provider,
+                                             NautilusSearchEngineTarget  taregt_engine);

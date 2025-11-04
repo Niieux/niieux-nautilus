@@ -43,6 +43,7 @@ enum
 enum
 {
     PROP_NAME = 1,
+    PROP_CUSTOM_NAME,
     PROP_LOCATION,
     PROP_ICON,
     PROP_SYMBOLIC_ICON,
@@ -57,6 +58,7 @@ struct _NautilusBookmark
     GObject parent_instance;
 
     char *name;
+    gboolean has_custom_name;
     GFile *location;
     GIcon *icon;
     GIcon *symbolic_icon;
@@ -79,6 +81,13 @@ nautilus_bookmark_set_name (NautilusBookmark *bookmark,
 {
     if (g_set_str (&bookmark->name, new_name))
     {
+        if ((new_name == NULL && bookmark->has_custom_name) ||
+            (new_name != NULL && !bookmark->has_custom_name))
+        {
+            bookmark->has_custom_name = !bookmark->has_custom_name;
+            g_object_notify_by_pspec (G_OBJECT (bookmark), properties[PROP_CUSTOM_NAME]);
+        }
+
         g_object_notify_by_pspec (G_OBJECT (bookmark), properties[PROP_NAME]);
     }
 }
@@ -87,12 +96,14 @@ static void
 bookmark_set_name_from_ready_file (NautilusBookmark *self,
                                    NautilusFile     *file)
 {
-    if (self->name != NULL)
+    const char *display_name;
+
+    if (self->has_custom_name)
     {
         return;
     }
 
-    const char *display_name = nautilus_file_get_display_name (self->file);
+    display_name = nautilus_file_get_display_name (self->file);
 
     if (nautilus_file_is_home (self->file))
     {
@@ -139,7 +150,7 @@ bookmark_file_changed_callback (NautilusFile     *file,
          * we will notice. However, we can't immediately do so
          * because creating a new NautilusFile directly as a result
          * of noticing a file goes away may trigger i/o on that file
-         * again, noticing it is gone, leading to a loop.
+         * again, noticeing it is gone, leading to a loop.
          * So, the new NautilusFile is created when the bookmark
          * is used again. However, this is not really a problem, as
          * we don't want to change the icon or anything about the
@@ -423,6 +434,12 @@ nautilus_bookmark_set_property (GObject      *object,
         }
         break;
 
+        case PROP_CUSTOM_NAME:
+        {
+            self->has_custom_name = g_value_get_boolean (value);
+        }
+        break;
+
         case PROP_NAME:
         {
             nautilus_bookmark_set_name (self, g_value_get_string (value));
@@ -468,6 +485,12 @@ nautilus_bookmark_get_property (GObject    *object,
         case PROP_LOCATION:
         {
             g_value_set_object (value, self->location);
+        }
+        break;
+
+        case PROP_CUSTOM_NAME:
+        {
+            g_value_set_boolean (value, self->has_custom_name);
         }
         break;
 
@@ -535,6 +558,13 @@ nautilus_bookmark_class_init (NautilusBookmarkClass *class)
                              NULL,
                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT | G_PARAM_EXPLICIT_NOTIFY);
 
+    properties[PROP_CUSTOM_NAME] =
+        g_param_spec_boolean ("custom-name",
+                              "Whether the bookmark has a custom name",
+                              "Whether the bookmark has a custom name",
+                              FALSE,
+                              G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
+
     properties[PROP_LOCATION] =
         g_param_spec_object ("location",
                              "Bookmark's location",
@@ -571,6 +601,52 @@ nautilus_bookmark_get_name (NautilusBookmark *bookmark)
     g_return_val_if_fail (NAUTILUS_IS_BOOKMARK (bookmark), NULL);
 
     return bookmark->name;
+}
+
+gboolean
+nautilus_bookmark_get_has_custom_name (NautilusBookmark *bookmark)
+{
+    g_return_val_if_fail (NAUTILUS_IS_BOOKMARK (bookmark), FALSE);
+
+    return (bookmark->has_custom_name);
+}
+
+/**
+ * nautilus_bookmark_compare_with:
+ *
+ * Check whether two bookmarks are considered identical.
+ * @a: first NautilusBookmark*.
+ * @b: second NautilusBookmark*.
+ *
+ * Return value: 0 if @a and @b have same name and uri, 1 otherwise
+ * (GCompareFunc style)
+ **/
+int
+nautilus_bookmark_compare_with (gconstpointer a,
+                                gconstpointer b)
+{
+    NautilusBookmark *bookmark_a;
+    NautilusBookmark *bookmark_b;
+
+    g_return_val_if_fail (NAUTILUS_IS_BOOKMARK ((gpointer) a), 1);
+    g_return_val_if_fail (NAUTILUS_IS_BOOKMARK ((gpointer) b), 1);
+
+    bookmark_a = NAUTILUS_BOOKMARK ((gpointer) a);
+    bookmark_b = NAUTILUS_BOOKMARK ((gpointer) b);
+
+    if (!g_file_equal (bookmark_a->location,
+                       bookmark_b->location))
+    {
+        return 1;
+    }
+
+    if (g_strcmp0 (bookmark_a->name,
+                   bookmark_b->name) != 0)
+    {
+        return 1;
+    }
+
+    return 0;
 }
 
 GIcon *
@@ -616,13 +692,17 @@ nautilus_bookmark_get_location (NautilusBookmark *bookmark)
      */
     nautilus_bookmark_connect_file (bookmark);
 
-    return bookmark->location;
+    return g_object_ref (bookmark->location);
 }
 
 char *
 nautilus_bookmark_get_uri (NautilusBookmark *bookmark)
 {
-    return g_file_get_uri (bookmark->location);
+    g_autoptr (GFile) file = NULL;
+
+    file = nautilus_bookmark_get_location (bookmark);
+
+    return g_file_get_uri (file);
 }
 
 NautilusBookmark *
@@ -634,6 +714,7 @@ nautilus_bookmark_new (GFile       *location,
     new_bookmark = NAUTILUS_BOOKMARK (g_object_new (NAUTILUS_TYPE_BOOKMARK,
                                                     "location", location,
                                                     "name", custom_name,
+                                                    "custom-name", custom_name != NULL,
                                                     NULL));
 
     return new_bookmark;

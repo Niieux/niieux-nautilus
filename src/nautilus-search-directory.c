@@ -31,8 +31,8 @@
 #include "nautilus-query.h"
 #include "nautilus-scheme.h"
 #include "nautilus-search-directory-file.h"
+#include "nautilus-search-engine-model.h"
 #include "nautilus-search-engine.h"
-#include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 
 struct _NautilusSearchDirectory
@@ -44,13 +44,13 @@ struct _NautilusSearchDirectory
     NautilusSearchEngine *engine;
 
     gboolean search_running;
-    /* When the search directory is stopped or cancelled, we might wait
+    /* When the search directory is stopped or cancelled, we migth wait
      * until all data and signals from previous search are stopped and removed
      * from the search engine. While this situation happens we don't want to connect
      * clients to our signals, and we will wait until the search data and signals
      * are valid and ready.
      * The worst thing that can happens if we don't do this is that new clients
-     * might get the information of old searches if they are waiting_for_file_list.
+     * migth get the information of old searchs if they are waiting_for_file_list.
      * But that shouldn't be a big deal since old clients have the old information.
      * But anyway it's currently unused for this case since the only client is
      * nautilus-view and is not waiting_for_file_list :) .
@@ -66,6 +66,8 @@ struct _NautilusSearchDirectory
     GList *monitor_list;
     GList *callback_list;
     GList *pending_callback_list;
+
+    GBinding *binding;
 
     NautilusDirectory *base_model;
 };
@@ -113,6 +115,12 @@ G_DEFINE_TYPE_WITH_CODE (NautilusSearchDirectory, nautilus_search_directory, NAU
 
 static GParamSpec *properties[NUM_PROPERTIES] = { NULL, };
 
+static void search_engine_hits_added (NautilusSearchEngine    *engine,
+                                      GList                   *hits,
+                                      NautilusSearchDirectory *self);
+static void search_engine_error (NautilusSearchEngine    *engine,
+                                 const char              *error,
+                                 NautilusSearchDirectory *self);
 static void search_callback_file_ready_callback (NautilusFile *file,
                                                  gpointer      data);
 static void file_changed (NautilusFile            *file,
@@ -148,28 +156,43 @@ reset_file_list (NautilusSearchDirectory *self)
     g_hash_table_remove_all (self->files_hash);
 }
 
-static gboolean
-is_monitoring_hidden_files (NautilusSearchDirectory *self)
+static void
+set_hidden_files (NautilusSearchDirectory *self)
 {
-    for (GList *l = self->monitor_list; l != NULL; l = l->next)
-    {
-        SearchMonitor *monitor = l->data;
+    GList *l;
+    SearchMonitor *monitor;
+    gboolean monitor_hidden = FALSE;
 
-        if (monitor->monitor_hidden_files)
+    for (l = self->monitor_list; l != NULL; l = l->next)
+    {
+        monitor = l->data;
+        monitor_hidden |= monitor->monitor_hidden_files;
+
+        if (monitor_hidden)
         {
-            return TRUE;
+            break;
         }
     }
 
-    return FALSE;
+    nautilus_query_set_show_hidden_files (self->query, monitor_hidden);
 }
 
 static void
 start_search (NautilusSearchDirectory *self)
 {
-    if (self->query == NULL ||
-        self->search_running ||
-        (self->monitor_list == NULL && self->pending_callback_list == NULL))
+    NautilusSearchEngineModel *model_provider;
+
+    if (!self->query)
+    {
+        return;
+    }
+
+    if (self->search_running)
+    {
+        return;
+    }
+
+    if (!self->monitor_list && !self->pending_callback_list)
     {
         return;
     }
@@ -178,12 +201,16 @@ start_search (NautilusSearchDirectory *self)
     self->search_running = TRUE;
     self->search_ready_and_valid = FALSE;
 
-    nautilus_query_set_show_hidden_files (self->query,
-                                          is_monitoring_hidden_files (self));
+    set_hidden_files (self);
+    nautilus_search_provider_set_query (NAUTILUS_SEARCH_PROVIDER (self->engine),
+                                        self->query);
+
+    model_provider = nautilus_search_engine_get_model_provider (self->engine);
+    nautilus_search_engine_model_set_model (model_provider, self->base_model);
 
     reset_file_list (self);
-    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (self->engine),
-                                    self->query);
+
+    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (self->engine));
 }
 
 static void
@@ -204,8 +231,12 @@ static void
 file_changed (NautilusFile            *file,
               NautilusSearchDirectory *self)
 {
-    nautilus_directory_emit_files_changed (NAUTILUS_DIRECTORY (self),
-                                           &(NautilusFileList){ .data = file });
+    GList list;
+
+    list.data = file;
+    list.next = NULL;
+
+    nautilus_directory_emit_files_changed (NAUTILUS_DIRECTORY (self), &list);
 }
 
 static void
@@ -476,7 +507,7 @@ search_call_when_ready (NautilusDirectory         *directory,
     {
         /* Add it to the pending callback list, which will be
          * processed when the directory has valid data from the new
-         * search and all data and signals from previous search is removed. */
+         * search and all data and signals from previous searchs is removed. */
         self->pending_callback_list =
             g_list_prepend (self->pending_callback_list, search_callback);
 
@@ -571,10 +602,10 @@ on_search_directory_search_ready_and_valid (NautilusSearchDirectory *self)
 
 static void
 search_engine_hits_added (NautilusSearchEngine    *engine,
-                          GPtrArray               *transferred_hits,
+                          GList                   *hits,
                           NautilusSearchDirectory *self)
 {
-    g_autoptr (GPtrArray) hits = transferred_hits;
+    GList *hit_list;
     GList *file_list;
     NautilusFile *file;
     g_autoptr (GDateTime) now = g_date_time_new_now_local ();
@@ -582,16 +613,15 @@ search_engine_hits_added (NautilusSearchEngine    *engine,
     GList *monitor_list;
 
     file_list = NULL;
-    g_autoptr (GFile) query_location = nautilus_search_directory_get_search_location (self);
 
-    for (guint i = 0; i < hits->len; i++)
+    for (hit_list = hits; hit_list != NULL; hit_list = hit_list->next)
     {
-        NautilusSearchHit *hit = hits->pdata[i];
+        NautilusSearchHit *hit = hit_list->data;
         const char *uri;
 
         uri = nautilus_search_hit_get_uri (hit);
 
-        nautilus_search_hit_compute_scores (hit, now, query_location);
+        nautilus_search_hit_compute_scores (hit, now, self->query);
 
         file = nautilus_file_get_by_uri (uri);
         nautilus_file_set_search_relevance (file, nautilus_search_hit_get_relevance (hit));
@@ -903,7 +933,7 @@ nautilus_search_directory_init (NautilusSearchDirectory *self)
     self->query = NULL;
     self->files_hash = g_hash_table_new (g_direct_hash, g_direct_equal);
 
-    self->engine = nautilus_search_engine_new (NAUTILUS_SEARCH_TYPE_FOLDER);
+    self->engine = nautilus_search_engine_new ();
     search_connect_engine (self);
 }
 
@@ -944,9 +974,10 @@ nautilus_search_directory_class_init (NautilusSearchDirectoryClass *class)
 static void
 update_base_model (NautilusSearchDirectory *self)
 {
-    g_autoptr (GFile) query_location = nautilus_search_directory_get_search_location (self);
+    g_autoptr (GFile) query_location = NULL;
     g_autoptr (NautilusDirectory) base_model = NULL;
 
+    query_location = self->query != NULL ? nautilus_query_get_location (self->query) : NULL;
     base_model = nautilus_directory_get (query_location);
 
     if (self->base_model == base_model)
@@ -959,14 +990,9 @@ update_base_model (NautilusSearchDirectory *self)
 
     if (self->base_model != NULL)
     {
-        nautilus_search_engine_set_search_type (self->engine, NAUTILUS_SEARCH_TYPE_FOLDER);
         nautilus_directory_file_monitor_add (base_model, &self->base_model,
                                              TRUE, NAUTILUS_FILE_ATTRIBUTE_INFO,
                                              NULL, NULL);
-    }
-    else
-    {
-        nautilus_search_engine_set_search_type (self->engine, NAUTILUS_SEARCH_TYPE_GLOBAL);
     }
 }
 
@@ -986,6 +1012,15 @@ nautilus_search_directory_set_query (NautilusSearchDirectory *self,
 
     if (g_set_object (&self->query, query))
     {
+        g_clear_pointer (&self->binding, g_binding_unbind);
+
+        if (query)
+        {
+            self->binding = g_object_bind_property (self->engine, "running",
+                                                    query, "searching",
+                                                    G_BINDING_DEFAULT | G_BINDING_SYNC_CREATE);
+        }
+
         g_object_notify_by_pspec (G_OBJECT (self), properties[PROP_QUERY]);
     }
 
@@ -1004,17 +1039,4 @@ NautilusQuery *
 nautilus_search_directory_get_query (NautilusSearchDirectory *self)
 {
     return self->query;
-}
-
-GFile *
-nautilus_search_directory_get_search_location (NautilusSearchDirectory *self)
-{
-    if (self->query != NULL)
-    {
-        return nautilus_query_get_location (self->query);
-    }
-    else
-    {
-        return NULL;
-    }
 }

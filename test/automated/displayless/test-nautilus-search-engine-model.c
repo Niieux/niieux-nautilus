@@ -1,24 +1,15 @@
 #include "test-utilities.h"
 
-#include <src/nautilus-file-utilities.h>
-#include <src/nautilus-global-preferences.h>
-#include <src/nautilus-query.h>
-#include <src/nautilus-search-engine.h>
-#include <src/nautilus-search-hit.h>
-#include <src/nautilus-search-provider.h>
-
 static guint total_hits = 0;
 
 static void
 hits_added_cb (NautilusSearchEngine *engine,
-               GPtrArray            *transferred_hits)
+               GSList               *hits)
 {
-    g_autoptr (GPtrArray) hits = transferred_hits;
-
     g_print ("Hits added for search engine model!\n");
-    for (guint i = 0; i < hits->len; i++)
+    for (gint hit_number = 0; hits != NULL; hits = hits->next, hit_number++)
     {
-        g_print ("Hit %i: %s\n", i, nautilus_search_hit_get_uri (hits->pdata[i]));
+        g_print ("Hit %i: %s\n", hit_number, nautilus_search_hit_get_uri (hits->data));
 
         total_hits += 1;
     }
@@ -43,6 +34,9 @@ main (int   argc,
       char *argv[])
 {
     g_autoptr (GMainLoop) loop = NULL;
+    NautilusSearchEngine *engine;
+    NautilusSearchEngineModel *model;
+    g_autoptr (NautilusDirectory) directory = NULL;
     g_autoptr (NautilusQuery) query = NULL;
     g_autoptr (GFile) location = NULL;
 
@@ -55,7 +49,7 @@ main (int   argc,
      */
     nautilus_global_preferences_init ();
 
-    NautilusSearchEngine *engine = nautilus_search_engine_new (NAUTILUS_SEARCH_TYPE_MODEL);
+    engine = nautilus_search_engine_new ();
     g_signal_connect (engine, "hits-added",
                       G_CALLBACK (hits_added_cb), NULL);
     g_signal_connect (engine, "finished",
@@ -63,14 +57,20 @@ main (int   argc,
 
     query = nautilus_query_new ();
     nautilus_query_set_text (query, "engine_model");
+    nautilus_search_provider_set_query (NAUTILUS_SEARCH_PROVIDER (engine), query);
 
     location = g_file_new_for_path (test_get_tmp_dir ());
+    directory = nautilus_directory_get (location);
+    model = nautilus_search_engine_get_model_provider (engine);
+    nautilus_search_engine_model_set_model (model, directory);
 
     nautilus_query_set_location (query, location);
 
     create_search_file_hierarchy ("model");
 
-    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (engine), query);
+    nautilus_search_engine_start_by_target (NAUTILUS_SEARCH_PROVIDER (engine),
+                                            NAUTILUS_SEARCH_ENGINE_MODEL_ENGINE);
+
     g_main_loop_run (loop);
 
     g_assert_cmpint (total_hits, ==, 3);

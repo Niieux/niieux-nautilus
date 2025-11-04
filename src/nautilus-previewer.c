@@ -126,8 +126,10 @@ on_ping_finished (GObject      *object,
                   GAsyncResult *res,
                   gpointer      user_data)
 {
+    g_autoptr (GVariant) variant = NULL;
     g_autoptr (GError) error = NULL;
-    g_autoptr (GVariant) variant = g_dbus_proxy_call_finish (G_DBUS_PROXY (object), res, &error);
+
+    variant = g_dbus_proxy_call_finish (G_DBUS_PROXY (object), res, &error);
 
     if (error == NULL)
     {
@@ -351,16 +353,16 @@ previewer_selection_event (GDBusConnection *connection,
         return;
     }
 
-    NautilusFilesView *view = nautilus_window_slot_get_current_view (current_slot);
+    NautilusView *view = nautilus_window_slot_get_current_view (current_slot);
     GtkDirectionType direction;
 
-    if (view == NULL)
+    if (!NAUTILUS_IS_FILES_VIEW (view))
     {
         return;
     }
 
     g_variant_get (parameters, "(u)", &direction);
-    nautilus_files_view_preview_selection_event (view, direction);
+    nautilus_files_view_preview_selection_event (NAUTILUS_FILES_VIEW (view), direction);
 }
 
 void
@@ -388,13 +390,14 @@ nautilus_previewer_teardown (GDBusConnection *connection)
 gboolean
 nautilus_previewer_is_visible (void)
 {
+    g_autoptr (GVariant) variant = NULL;
+
     if (!ensure_previewer_proxy ())
     {
         return FALSE;
     }
 
-    g_autoptr (GVariant) variant = g_dbus_proxy_get_cached_property (previewer_proxy, "Visible");
-
+    variant = g_dbus_proxy_get_cached_property (previewer_proxy, "Visible");
     if (variant)
     {
         return g_variant_get_boolean (variant);

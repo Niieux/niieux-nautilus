@@ -562,9 +562,8 @@ on_app_chooser_response (GtkDialog *dialog,
 
     if (application != NULL)
     {
-        nautilus_launch_application (application,
-                                     &(NautilusFileList){ .data = data->file },
-                                     data->parent_window);
+        GList files = {data->file, NULL, NULL};
+        nautilus_launch_application (application, &files, data->parent_window);
     }
 
     invoke_main_context_completed (user_data);

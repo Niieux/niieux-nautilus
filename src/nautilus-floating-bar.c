@@ -25,8 +25,6 @@
 
 #include <string.h>
 
-#include <glib/gi18n.h>
-
 #include "nautilus-floating-bar.h"
 
 #define HOVER_HIDE_TIMEOUT_INTERVAL 100
@@ -388,7 +386,6 @@ nautilus_floating_bar_constructed (GObject *obj)
     gtk_widget_add_css_class (w, "circular");
     gtk_widget_add_css_class (w, "flat");
     gtk_widget_set_valign (w, GTK_ALIGN_CENTER);
-    gtk_widget_set_tooltip_text (w, C_("Stop an ongoing operation", "Stop"));
     gtk_box_append (GTK_BOX (self), w);
     self->stop_button = w;
     gtk_widget_set_visible (w, FALSE);

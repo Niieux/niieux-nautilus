@@ -18,10 +18,10 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
 #include <glib.h>
 #include <gtk/gtk.h>
+
+#include "nautilus-query.h"
 
 G_BEGIN_DECLS
 
@@ -38,13 +38,15 @@ G_DECLARE_FINAL_TYPE (NautilusSearchPopover, nautilus_search_popover, NAUTILUS, 
 
 GtkWidget*           nautilus_search_popover_new                 (void);
 
-void
-nautilus_search_popover_set_date_range (NautilusSearchPopover *popover,
-                                        GPtrArray             *date_range);
+NautilusQuery*       nautilus_search_popover_get_query           (NautilusSearchPopover *popover);
+
+void                 nautilus_search_popover_set_query           (NautilusSearchPopover *popover,
+                                                                  NautilusQuery         *query);
 void                 nautilus_search_popover_reset_date_range    (NautilusSearchPopover *popover);
 void                 nautilus_search_popover_reset_mime_types    (NautilusSearchPopover *popover);
 
-void                 nautilus_search_popover_set_fts_available   (NautilusSearchPopover *popover,
+gboolean             nautilus_search_popover_get_fts_enabled     (NautilusSearchPopover *popover);
+void                 nautilus_search_popover_set_fts_sensitive   (NautilusSearchPopover *popover,
                                                                   gboolean               sensitive);
 
 G_END_DECLS

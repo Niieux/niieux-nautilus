@@ -23,11 +23,8 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
-#include "nautilus-file.h"
-
 #include <gtk/gtk.h>
+#include "nautilus-file.h"
 
 #define MAXIMUM_DISPLAYED_FILE_NAME_LENGTH      50
 #define MAXIMUM_DISPLAYED_ERROR_MESSAGE_LENGTH  350

@@ -25,16 +25,24 @@
 #include "nautilus-types.h"
 
 G_BEGIN_DECLS
-
 #define NAUTILUS_TYPE_APPLICATION (nautilus_application_get_type())
-G_DECLARE_FINAL_TYPE (NautilusApplication, nautilus_application,
-                      NAUTILUS, APPLICATION, AdwApplication)
+G_DECLARE_DERIVABLE_TYPE (NautilusApplication, nautilus_application, NAUTILUS, APPLICATION, AdwApplication)
+
+struct _NautilusApplicationClass {
+	AdwApplicationClass parent_class;
+
+        void  (*open_location_full) (NautilusApplication     *application,
+                                     GFile                   *location,
+                                     NautilusOpenFlags        flags,
+                                     GList                   *selection,
+                                     NautilusWindow          *target_window,
+                                     NautilusWindowSlot      *target_slot,
+                                     const char              *startup_id);
+};
 
 NautilusApplication * nautilus_application_new (void);
 
-NautilusWindow *
-nautilus_application_create_window (NautilusApplication *self,
-                                    const char          *startup_id);
+NautilusWindow *     nautilus_application_create_window (NautilusApplication *application);
 
 void nautilus_application_set_accelerator (GApplication *app,
 					   const gchar  *action_name,
@@ -68,6 +76,8 @@ void nautilus_application_withdraw_notification (NautilusApplication *self,
 
 NautilusBookmarkList *
      nautilus_application_get_bookmarks  (NautilusApplication *application);
+void nautilus_application_edit_bookmarks (NautilusApplication *application,
+					  NautilusWindow      *window);
 
 GtkWidget * nautilus_application_connect_server (NautilusApplication *application,
 						 NautilusWindow      *window);

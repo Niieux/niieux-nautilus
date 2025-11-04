@@ -14,6 +14,8 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 
+#include "gtk/nautilusgtkplacessidebarprivate.h"
+
 #include "nautilus-directory.h"
 #include "nautilus-enum-types.h"
 #include "nautilus-file.h"
@@ -22,7 +24,6 @@
 #include "nautilus-global-preferences.h"
 #include "nautilus-scheme.h"
 #include "nautilus-shortcut-manager.h"
-#include "nautilus-sidebar.h"
 #include "nautilus-toolbar.h"
 #include "nautilus-view-item-filter.h"
 #include "nautilus-window-slot.h"
@@ -80,8 +81,8 @@ static guint signals[LAST_SIGNAL];
 static void open_filename_entry (NautilusFileChooser *self);
 
 static gboolean
-mode_can_accept_files (NautilusMode      mode,
-                       NautilusFileList *files)
+mode_can_accept_files (NautilusMode  mode,
+                       GList        *files)
 {
     if (files == NULL)
     {
@@ -115,7 +116,7 @@ mode_can_accept_files (NautilusMode      mode,
         case NAUTILUS_MODE_OPEN_FILES:
         case NAUTILUS_MODE_OPEN_FOLDERS:
         {
-            for (NautilusFileList *l = files; l != NULL; l = l->next)
+            for (GList *l = files; l != NULL; l = l->next)
             {
                 gboolean is_folder = nautilus_file_opens_in_view (NAUTILUS_FILE (l->data));
 
@@ -176,7 +177,7 @@ mode_can_accept_current_directory (NautilusMode  mode,
 
 static gboolean
 nautilus_file_chooser_can_accept (NautilusFileChooser *self,
-                                  NautilusFileList    *files,
+                                  GList               *files,
                                   GFile               *location,
                                   gboolean             filename_passed)
 {
@@ -268,7 +269,7 @@ get_file_chooser_activation_location (NautilusFile *file)
 static void
 on_accept_button_clicked (NautilusFileChooser *self)
 {
-    NautilusFileList *selection = nautilus_window_slot_get_selection (self->slot);
+    GList *selection = nautilus_window_slot_get_selection (self->slot);
 
     if (self->mode == NAUTILUS_MODE_SAVE_FILE)
     {
@@ -361,9 +362,6 @@ on_file_drop (GtkDropTarget *target,
               gpointer       user_data)
 {
     GSList *locations = g_value_get_boxed (value);
-
-    g_return_if_fail (locations != NULL);
-
     g_autolist (NautilusFile) selection = NULL;
     g_autoptr (GFile) location = NULL;
     NautilusFileChooser *self = user_data;
@@ -387,7 +385,7 @@ on_file_drop (GtkDropTarget *target,
         location = g_file_get_parent (locations->data);
     }
 
-    nautilus_window_slot_open_location_full (self->slot, location, selection);
+    nautilus_window_slot_open_location_full (self->slot, location, 0, selection);
 }
 
 static void
@@ -452,7 +450,7 @@ on_filename_undo_button_clicked (NautilusFileChooser *self)
 {
     gtk_editable_set_text (GTK_EDITABLE (self->filename_entry), self->suggested_name);
 
-    nautilus_window_slot_open_location_full (self->slot, nautilus_window_slot_get_location (self->slot), NULL);
+    nautilus_window_slot_open_location_full (self->slot, nautilus_window_slot_get_location (self->slot), 0, NULL);
 }
 
 static void
@@ -460,7 +458,7 @@ on_slot_selection_notify (NautilusFileChooser *self)
 {
     g_return_if_fail (self->mode == NAUTILUS_MODE_SAVE_FILE);
 
-    NautilusFileList *selection = nautilus_window_slot_get_selection (self->slot);
+    GList *selection = nautilus_window_slot_get_selection (self->slot);
 
     if (mode_can_accept_files (self->mode, selection))
     {
@@ -782,7 +780,7 @@ nautilus_file_chooser_init (NautilusFileChooser *self)
 {
     g_type_ensure (NAUTILUS_TYPE_FILENAME_VALIDATOR);
     g_type_ensure (NAUTILUS_TYPE_TOOLBAR);
-    g_type_ensure (NAUTILUS_TYPE_PLACES_SIDEBAR);
+    g_type_ensure (NAUTILUS_TYPE_GTK_PLACES_SIDEBAR);
     g_type_ensure (NAUTILUS_TYPE_SHORTCUT_MANAGER);
     gtk_widget_init_template (GTK_WIDGET (self));
 
@@ -793,10 +791,10 @@ nautilus_file_chooser_init (NautilusFileChooser *self)
     gtk_window_group_add_window (window_group, GTK_WINDOW (self));
 
     /* Setup sidebar */
-    nautilus_sidebar_set_open_flags (NAUTILUS_PLACES_SIDEBAR (self->places_sidebar),
-                                     NAUTILUS_OPEN_FLAG_NORMAL);
-    nautilus_sidebar_set_show_trash (NAUTILUS_PLACES_SIDEBAR (self->places_sidebar),
-                                     FALSE);
+    nautilus_gtk_places_sidebar_set_open_flags (NAUTILUS_GTK_PLACES_SIDEBAR (self->places_sidebar),
+                                                NAUTILUS_OPEN_FLAG_NORMAL);
+    nautilus_gtk_places_sidebar_set_show_trash (NAUTILUS_GTK_PLACES_SIDEBAR (self->places_sidebar),
+                                                FALSE);
 
     GtkEventController *controller = gtk_event_controller_key_new ();
     gtk_widget_add_controller (GTK_WIDGET (self), controller);
@@ -928,7 +926,7 @@ nautilus_file_chooser_set_starting_location (NautilusFileChooser *self,
         location_to_open = g_file_new_for_path (g_get_home_dir ());
     }
 
-    nautilus_window_slot_open_location_full (self->slot, location_to_open, NULL);
+    nautilus_window_slot_open_location_full (self->slot, location_to_open, 0, NULL);
 }
 
 void

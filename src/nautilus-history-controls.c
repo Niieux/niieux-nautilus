@@ -8,7 +8,6 @@
 
 #include "nautilus-bookmark.h"
 #include "nautilus-window.h"
-#include "nautilus-window-slot.h"
 
 struct _NautilusHistoryControls
 {

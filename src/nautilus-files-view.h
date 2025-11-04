@@ -1,4 +1,4 @@
-/* nautilus-files-view.h
+/* nautilus-view.h
  *
  * Copyright (C) 1999, 2000  Free Software Foundaton
  * Copyright (C) 2000, 2001  Eazel, Inc.
@@ -24,53 +24,97 @@
 
 #pragma once
 
-#include "nautilus-types.h"
-
-#include <adwaita.h>
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+
+#include "nautilus-directory.h"
+#include "nautilus-file.h"
+
+#include "nautilus-view.h"
+#include "nautilus-window-slot.h"
 
 G_BEGIN_DECLS
 
 #define NAUTILUS_TYPE_FILES_VIEW nautilus_files_view_get_type()
-G_DECLARE_FINAL_TYPE (NautilusFilesView, nautilus_files_view, NAUTILUS, FILES_VIEW, AdwBin)
+
+G_DECLARE_DERIVABLE_TYPE (NautilusFilesView, nautilus_files_view, NAUTILUS, FILES_VIEW, AdwBin)
+
+struct _NautilusFilesViewClass {
+        AdwBinClass parent_class;
+
+        /* The 'clear' signal is emitted to empty the view of its contents.
+         * It must be replaced by each subclass.
+         */
+        void         (* clear)                  (NautilusFilesView *view);
+
+        /* The 'begin_file_changes' signal is emitted before a set of files
+         * are added to the view. It can be replaced by a subclass to do any
+         * necessary preparation for a set of new files. The default
+         * implementation does nothing.
+         */
+        void         (* begin_file_changes)     (NautilusFilesView *view);
+
+        /* The 'add_files' signal is emitted to add a set of files to the view.
+         */
+        void    (* add_files)                    (NautilusFilesView *view,
+                                                  GList             *files);
+        void    (* remove_files)                 (NautilusFilesView *view,
+                                                 GList             *files,
+                                                 NautilusDirectory *directory);
+
+        /* The 'file_changed' signal is emitted to signal a change in a file,
+         * including the file being removed.
+         */
+        void         (* file_changed)         (NautilusFilesView *view,
+                                               NautilusFile      *file,
+                                               NautilusDirectory *directory);
+
+        /* The 'end_file_changes' signal is emitted after a set of files
+         * are added to the view. It can be connected to in order to do any
+         * necessary cleanup (typically, cleanup for code in begin_file_changes).
+         */
+        void         (* end_file_changes)    (NautilusFilesView *view);
+
+        /* The 'begin_loading' signal is emitted before any of the contents
+         * of a directory are added to the view. It can be replaced by a
+         * subclass to do any necessary preparation to start dealing with a
+         * new directory. The default implementation does nothing.
+         */
+        void         (* begin_loading)       (NautilusFilesView *view);
+
+        /* The 'end_loading' signal is emitted after all of the contents
+         * of a directory are added to the view.
+         *
+         * If all_files_seen is true, the handler may assume that
+         * no load error ocurred, and all files of the underlying
+         * directory were loaded.
+         *
+         * Otherwise, end_loading was emitted due to cancellation,
+         * which usually means that not all files are available.
+         */
+        void         (* end_loading)          (NautilusFilesView *view,
+                                               gboolean           all_files_seen);
+
+        /* Function pointers that don't have corresponding signals */
+
+        /* update_menus is a function pointer that subclasses can override to
+         * update the sensitivity or wording of menu items in the menu bar.
+         * It is called (at least) whenever the selection changes. If overridden,
+         * subclasses must call parent class's function.
+         */
+        void    (* update_context_menus)     (NautilusFilesView *view);
+
+        void    (* update_actions_state)     (NautilusFilesView *view);
+
+        /* Use this to show an optional visual feedback when the directory is empty.
+         * By default it shows a widget overlay on top of the view */
+        void           (* check_empty_states)          (NautilusFilesView *view);
+};
 
 NautilusFilesView *      nautilus_files_view_new                         (guint               id,
                                                                           NautilusWindowSlot *slot);
-
-guint
-nautilus_files_view_get_view_id (NautilusFilesView *self);
 void                nautilus_files_view_change                           (NautilusFilesView  *self,
                                                                           guint               id);
-
-const char *
-nautilus_files_view_get_toggle_icon_name (NautilusFilesView *self);
-const char *
-nautilus_files_view_get_toggle_tooltip (NautilusFilesView *self);
-
-GFile *
-nautilus_files_view_get_location (NautilusFilesView *self);
-void
-nautilus_files_view_set_location (NautilusFilesView *self,
-                                  GFile             *location);
-
-NautilusQuery *
-nautilus_files_view_get_search_query (NautilusFilesView *self);
-void
-nautilus_files_view_set_search_query (NautilusFilesView *self,
-                                      NautilusQuery     *query);
-
-NautilusFileList *
-nautilus_files_view_get_selection (NautilusFilesView *self);
-void
-nautilus_files_view_set_selection (NautilusFilesView *self,
-                                   NautilusFileList  *selection);
-
-gboolean
-nautilus_files_view_is_loading (NautilusFilesView *self);
-gboolean
-nautilus_files_view_is_searching (NautilusFilesView *self);
-
 /* Wrappers for signal emitters. These are normally called
  * only by NautilusFilesView itself. They have corresponding signals
  * that observers might want to connect with.
@@ -113,15 +157,8 @@ void              nautilus_files_view_preview_selection_event    (NautilusFilesV
                                                                   GtkDirectionType        direction);
 void              nautilus_files_view_stop_loading               (NautilusFilesView      *view);
 
-NautilusToolbarMenuSections *
-nautilus_files_view_get_toolbar_menu_sections (NautilusFilesView *self);
-
 void              nautilus_files_view_update_context_menus       (NautilusFilesView      *view);
 void              nautilus_files_view_update_toolbar_menus       (NautilusFilesView      *view);
 void              nautilus_files_view_update_actions_state       (NautilusFilesView      *view);
-
-/* testing-only */
-NautilusViewModel *
-nautilus_files_view_get_private_model (NautilusFilesView *self);
 
 G_END_DECLS

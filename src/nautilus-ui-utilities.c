@@ -231,19 +231,10 @@ nautilus_g_menu_replace_string_in_item (GMenu       *menu,
                                         const gchar *attribute,
                                         const gchar *string)
 {
-    GMenuModel *menu_model = G_MENU_MODEL (menu);
-    g_return_if_fail (i > -1 && i < g_menu_model_get_n_items (menu_model));
+    g_autoptr (GMenuItem) item = NULL;
 
-    g_autofree gchar *old_string = NULL;
-
-    if (g_menu_model_get_item_attribute (menu_model, i, attribute, "s", &old_string) &&
-        g_strcmp0 (old_string, string) == 0)
-    {
-        /* Value is already set */
-        return;
-    }
-
-    g_autoptr (GMenuItem) item = g_menu_item_new_from_model (menu_model, i);
+    g_return_if_fail (i != -1);
+    item = g_menu_item_new_from_model (G_MENU_MODEL (menu), i);
     g_return_if_fail (item != NULL);
 
     if (string != NULL)
@@ -267,7 +258,7 @@ ensure_filmholes (void)
 {
     if (filmholes_left == NULL)
     {
-        filmholes_left = gdk_pixbuf_new_from_resource ("/org/gnome/nautilus/image/filmholes.png", NULL);
+        filmholes_left = gdk_pixbuf_new_from_resource ("/org/gnome/nautilus/icons/filmholes.png", NULL);
     }
     if (filmholes_right == NULL &&
         filmholes_left != NULL)
@@ -337,6 +328,99 @@ nautilus_date_time_is_between_dates (GDateTime *date,
                  g_date_time_difference (end_date, date) / G_TIME_SPAN_DAY > -1;
 
     return in_between;
+}
+
+static const gchar *
+get_text_for_days_ago (gint     days,
+                       gboolean prefix_with_since)
+{
+    if (days < 7)
+    {
+        /* days */
+        return prefix_with_since ?
+               ngettext ("Since %d day ago", "Since %d days ago", days) :
+               ngettext ("%d day ago", "%d days ago", days);
+    }
+    if (days < 30)
+    {
+        /* weeks */
+        return prefix_with_since ?
+               ngettext ("Since last week", "Since %d weeks ago", days / 7) :
+               ngettext ("Last week", "%d weeks ago", days / 7);
+    }
+    if (days < 365)
+    {
+        /* months */
+        return prefix_with_since ?
+               ngettext ("Since last month", "Since %d months ago", days / 30) :
+               ngettext ("Last month", "%d months ago", days / 30);
+    }
+
+    /* years */
+    return prefix_with_since ?
+           ngettext ("Since last year", "Since %d years ago", days / 365) :
+           ngettext ("Last year", "%d years ago", days / 365);
+}
+
+gchar *
+get_text_for_date_range (GPtrArray *date_range,
+                         gboolean   prefix_with_since)
+{
+    gint days;
+    gint normalized;
+    GDateTime *initial_date;
+    GDateTime *end_date;
+    gchar *formatted_date;
+    gchar *label;
+
+    if (!date_range)
+    {
+        return NULL;
+    }
+
+    initial_date = g_ptr_array_index (date_range, 0);
+    end_date = g_ptr_array_index (date_range, 1);
+    days = g_date_time_difference (end_date, initial_date) / G_TIME_SPAN_DAY;
+    formatted_date = g_date_time_format (initial_date, "%x");
+
+    if (days < 1)
+    {
+        label = g_strdup (formatted_date);
+    }
+    else
+    {
+        if (days < 7)
+        {
+            /* days */
+            normalized = days;
+        }
+        else if (days < 30)
+        {
+            /* weeks */
+            normalized = days / 7;
+        }
+        else if (days < 365)
+        {
+            /* months */
+            normalized = days / 30;
+        }
+        else
+        {
+            /* years */
+            normalized = days / 365;
+        }
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
+        label = g_strdup_printf (get_text_for_days_ago (days,
+                                                        prefix_with_since),
+                                 normalized);
+#pragma GCC diagnostic pop
+    }
+
+    g_free (formatted_date);
+
+    return label;
 }
 
 AdwMessageDialog *
@@ -441,227 +525,4 @@ show_unmount_progress_aborted_cb (GMountOperation *op,
                                   gpointer         user_data)
 {
     notify_unmount_done (op, NULL, user_data);
-}
-
-static float
-get_dash_width (guint size)
-{
-    switch (size)
-    {
-        case NAUTILUS_LIST_ICON_SIZE_SMALL:
-        {
-            /* We don't want to draw borders for the smallest size. */
-            g_assert_not_reached ();
-        }
-
-        case NAUTILUS_LIST_ICON_SIZE_MEDIUM:
-        {
-            return 1.5;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_SMALL:
-        {
-            return 2.0;
-        }
-
-        /* case NAUTILUS_LIST_ICON_SIZE_LARGE */
-        case NAUTILUS_GRID_ICON_SIZE_SMALL_PLUS:
-        {
-            return 2.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_MEDIUM:
-        {
-            return 3.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_LARGE:
-        {
-            return 4.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_EXTRA_LARGE:
-        {
-            return 5.0;
-        }
-
-        default:
-        {
-            g_assert_not_reached ();
-        }
-        break;
-    }
-}
-
-static float
-get_dash_length (guint size)
-{
-    switch (size)
-    {
-        case NAUTILUS_LIST_ICON_SIZE_SMALL:
-        {
-            /* We don't want to draw borders for the smallest size. */
-            g_assert_not_reached ();
-        }
-
-        case NAUTILUS_LIST_ICON_SIZE_MEDIUM:
-        {
-            return 6.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_SMALL:
-        {
-            return 10.0;
-        }
-
-        /* case NAUTILUS_LIST_ICON_SIZE_LARGE */
-        case NAUTILUS_GRID_ICON_SIZE_SMALL_PLUS:
-        {
-            return 10.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_MEDIUM:
-        {
-            return 15.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_LARGE:
-        {
-            return 20;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_EXTRA_LARGE:
-        {
-            return 25;
-        }
-
-        default:
-        {
-            g_assert_not_reached ();
-        }
-        break;
-    }
-}
-
-static float
-get_dash_radius (guint size)
-{
-    switch (size)
-    {
-        case NAUTILUS_LIST_ICON_SIZE_SMALL:
-        {
-            /* We don't want to draw borders for the smallest size. */
-            g_assert_not_reached ();
-        }
-
-        case NAUTILUS_LIST_ICON_SIZE_MEDIUM:
-        {
-            return 4;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_SMALL:
-        {
-            return 5.33;
-        }
-
-        /* case NAUTILUS_LIST_ICON_SIZE_LARGE */
-        case NAUTILUS_GRID_ICON_SIZE_SMALL_PLUS:
-        {
-            return 5.33;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_MEDIUM:
-        {
-            return 8.0;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_LARGE:
-        {
-            return 10.66;
-        }
-
-        case NAUTILUS_GRID_ICON_SIZE_EXTRA_LARGE:
-        {
-            return 13.33;
-        }
-
-        default:
-        {
-            g_assert_not_reached ();
-        }
-        break;
-    }
-}
-
-#define DASH_STROKE_FRACTION 13.0 / 20.0
-
-void
-nautilus_ui_draw_icon_dashed_border (GtkSnapshot     *snapshot,
-                                     graphene_rect_t *rect,
-                                     GdkRGBA          color)
-{
-    float width = rect->size.width;
-    float stroke_width = get_dash_width (width);
-    const float ideal_dash_length = get_dash_length (width) + stroke_width;
-    const float radius = get_dash_radius (width);
-    /* Need to inset the rectangle and the dash length by the dash width. */
-    graphene_rect_t *dash_bounds = graphene_rect_inset (rect,
-                                                        stroke_width / 2.0,
-                                                        stroke_width / 2.0);
-    /* Calculate the path length and divide it by the number of dashes to have
-     * an exact fractional dash length with no overlap at the start/end point.
-     */
-    float border_length = dash_bounds->size.width * 2 +
-                          dash_bounds->size.height * 2 +
-                          2 * G_PI * radius - 8 * radius;
-    const float number_of_dashes = round (border_length / ideal_dash_length);
-    float dash_length = border_length / number_of_dashes;
-    float dash_pattern[] =
-    {
-        dash_length * DASH_STROKE_FRACTION,
-        dash_length * (1 - DASH_STROKE_FRACTION),
-    };
-    graphene_size_t arc_size = GRAPHENE_SIZE_INIT (radius, radius);
-    GskRoundedRect round_rect;
-    GskPathBuilder *path_builder = gsk_path_builder_new ();
-    g_autoptr (GskStroke) stroke = gsk_stroke_new (stroke_width);
-
-    gsk_rounded_rect_init (&round_rect, dash_bounds, &arc_size, &arc_size, &arc_size, &arc_size);
-
-    gsk_path_builder_add_rounded_rect (path_builder, &round_rect);
-    gsk_path_builder_close (path_builder);
-
-    g_autoptr (GskPath) path = gsk_path_builder_free_to_path (path_builder);
-
-    gsk_stroke_set_dash (stroke, dash_pattern, G_N_ELEMENTS (dash_pattern));
-    gsk_stroke_set_line_cap (stroke, GSK_LINE_CAP_ROUND);
-
-    gtk_snapshot_append_stroke (snapshot, path, stroke, &color);
-}
-
-void
-nautilus_ui_draw_symbolic_icon (GtkSnapshot           *snapshot,
-                                const gchar           *icon_name,
-                                const graphene_rect_t *rect,
-                                GdkRGBA                color,
-                                int                    scale)
-{
-    g_autoptr (GIcon) gicon = g_themed_icon_new (icon_name);
-    g_autoptr (NautilusIconInfo) icon = nautilus_icon_info_lookup (gicon,
-                                                                   2.0 * rect->size.width,
-                                                                   scale);
-    g_autoptr (GdkPaintable) paintable = nautilus_icon_info_get_paintable (icon);
-    const GdkRGBA colors[] = {color};
-
-    g_assert (GTK_IS_SYMBOLIC_PAINTABLE (paintable));
-
-    gtk_snapshot_save (snapshot);
-    gtk_snapshot_translate (snapshot, &rect->origin);
-    gtk_symbolic_paintable_snapshot_symbolic (GTK_SYMBOLIC_PAINTABLE (paintable),
-                                              snapshot,
-                                              rect->size.width,
-                                              rect->size.height,
-                                              colors,
-                                              G_N_ELEMENTS (colors));
-    gtk_snapshot_restore (snapshot);
 }

@@ -74,8 +74,12 @@ static void
 file_changed (NautilusFile              *file,
               NautilusFavoriteDirectory *starred)
 {
-    nautilus_directory_emit_files_changed (NAUTILUS_DIRECTORY (starred),
-                                           &(NautilusFileList) { .data = file });
+    GList list;
+
+    list.data = file;
+    list.next = NULL;
+
+    nautilus_directory_emit_files_changed (NAUTILUS_DIRECTORY (starred), &list);
 }
 
 static void
@@ -124,8 +128,9 @@ nautilus_starred_directory_update_files (NautilusFavoriteDirectory *self,
             !nautilus_tag_manager_file_is_starred (tag_manager, uri))
         {
             disconnect_and_unmonitor_file (file, self);
+            nautilus_file_unref (file);
+            files_removed = g_list_prepend (files_removed, nautilus_file_ref (file));
             self->files = g_list_remove (self->files, file);
-            files_removed = g_list_prepend (files_removed, g_steal_pointer (&file));
         }
         else if (!g_hash_table_contains (uri_table, uri) &&
                  nautilus_tag_manager_file_is_starred (tag_manager, uri))

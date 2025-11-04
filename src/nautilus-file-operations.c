@@ -47,18 +47,17 @@
 
 #include "nautilus-error-reporting.h"
 #include "nautilus-fd-holder.h"
+#include "nautilus-operations-ui-manager.h"
 #include "nautilus-file-changes-queue.h"
 #include "nautilus-file-conflict-dialog.h"
-#include "nautilus-file-operations-dbus-data.h"
 #include "nautilus-file-private.h"
-#include "nautilus-file-undo-manager.h"
-#include "nautilus-file-undo-operations.h"
-#include "nautilus-file-utilities.h"
 #include "nautilus-filename-utilities.h"
-#include "nautilus-operations-ui-manager.h"
-#include "nautilus-scheme.h"
 #include "nautilus-tag-manager.h"
 #include "nautilus-trash-monitor.h"
+#include "nautilus-file-utilities.h"
+#include "nautilus-file-undo-operations.h"
+#include "nautilus-file-undo-manager.h"
+#include "nautilus-scheme.h"
 #include "nautilus-ui-utilities.h"
 
 #ifdef GDK_WINDOWING_X11
@@ -1093,19 +1092,7 @@ static void
 inhibit_power_manager (CommonJob  *job,
                        const char *message)
 {
-    /* Since we might never initiate the app (in the case of testing), we can't
-     * inhibit its power manager. This would emit a warning that terminates the
-     * testing. So we avoid doing this by checking if the RUNNING_TESTS
-     * environment variable is set to "TRUE".
-     */
-    if (g_strcmp0 (g_getenv ("RUNNING_TESTS"), "TRUE") == 0)
-    {
-        return;
-    }
-
-    GtkApplication *app = GTK_APPLICATION (g_application_get_default ());
-
-    job->inhibit_cookie = gtk_application_inhibit (app,
+    job->inhibit_cookie = gtk_application_inhibit (GTK_APPLICATION (g_application_get_default ()),
                                                    GTK_WINDOW (job->parent_window),
                                                    GTK_APPLICATION_INHIBIT_LOGOUT |
                                                    GTK_APPLICATION_INHIBIT_SUSPEND,
@@ -1829,9 +1816,10 @@ trash_file (CommonJob     *job,
             gboolean      *skipped_file,
             SourceInfo    *source_info,
             TransferInfo  *transfer_info,
+            gboolean       toplevel,
             GList        **to_delete)
 {
-    g_autoptr (GError) error = NULL;
+    GError *error;
     char *primary, *secondary, *details;
     int response;
     g_autofree gchar *basename = NULL;
@@ -1841,6 +1829,8 @@ trash_file (CommonJob     *job,
         *skipped_file = TRUE;
         return;
     }
+
+    error = NULL;
 
     if (g_file_trash (file, job->cancellable, &error))
     {
@@ -1859,13 +1849,13 @@ trash_file (CommonJob     *job,
     if (job->skip_all_error)
     {
         *skipped_file = TRUE;
-        return;
+        goto skip;
     }
 
     if (job->delete_all)
     {
         *to_delete = g_list_prepend (*to_delete, file);
-        return;
+        goto skip;
     }
 
     basename = get_basename (file);
@@ -1917,6 +1907,9 @@ trash_file (CommonJob     *job,
     {
         *to_delete = g_list_prepend (*to_delete, file);
     }
+
+skip:
+    g_error_free (error);
 }
 
 static void
@@ -2024,7 +2017,7 @@ trash_files (CommonJob *job,
         trash_file (job, file,
                     &skipped_file,
                     &source_info, &transfer_info,
-                    &to_delete);
+                    TRUE, &to_delete);
         if (skipped_file)
         {
             (*files_skipped)++;
@@ -2170,13 +2163,16 @@ setup_delete_job (GList                          *files,
     job->done_callback = done_callback;
     job->done_callback_data = done_callback_data;
 
-    if (try_trash)
+    if (g_strcmp0 (g_getenv ("RUNNING_TESTS"), "TRUE"))
     {
-        inhibit_power_manager ((CommonJob *) job, _("Trashing Files"));
-    }
-    else
-    {
-        inhibit_power_manager ((CommonJob *) job, _("Deleting Files"));
+        if (try_trash)
+        {
+            inhibit_power_manager ((CommonJob *) job, _("Trashing Files"));
+        }
+        else
+        {
+            inhibit_power_manager ((CommonJob *) job, _("Deleting Files"));
+        }
     }
 
     if (!nautilus_file_undo_manager_is_operating () && try_trash)
@@ -2307,10 +2303,11 @@ unmount_mount_callback (GObject      *source_object,
                         gpointer      user_data)
 {
     UnmountData *data = user_data;
+    GError *error;
     char *primary;
     gboolean unmounted;
 
-    g_autoptr (GError) error = NULL;
+    error = NULL;
     if (data->eject)
     {
         unmounted = g_mount_eject_with_operation_finish (G_MOUNT (source_object),
@@ -2350,6 +2347,11 @@ unmount_mount_callback (GObject      *source_object,
     if (data->callback)
     {
         data->callback (data->callback_data);
+    }
+
+    if (error != NULL)
+    {
+        g_error_free (error);
     }
 
     unmount_data_free (data);
@@ -2638,12 +2640,13 @@ volume_mount_cb (GObject      *source_object,
     NautilusMountCallback mount_callback;
     GObject *mount_callback_data_object;
     GMountOperation *mount_op = user_data;
+    GError *error;
     char *primary;
     char *name;
     gboolean success;
 
     success = TRUE;
-    g_autoptr (GError) error = NULL;
+    error = NULL;
     if (!g_volume_mount_finish (G_VOLUME (source_object), res, &error))
     {
         if (error->code != G_IO_ERROR_FAILED_HANDLED &&
@@ -2662,6 +2665,7 @@ volume_mount_cb (GObject      *source_object,
                          GTK_MESSAGE_ERROR);
             g_free (primary);
         }
+        g_error_free (error);
     }
 
     mount_callback = (NautilusMountCallback)
@@ -3849,6 +3853,7 @@ static GFile *
 get_unique_target_file (GFile        *src,
                         GFile        *dest_dir,
                         GCancellable *cancellable,
+                        gboolean      same_fs,
                         const char   *dest_fs_type,
                         int           count)
 {
@@ -4873,6 +4878,7 @@ copy_move_file (CopyMoveJob   *copy_job,
                 gboolean       reset_perms)
 {
     GFile *dest, *new_dest;
+    g_autofree gchar *dest_uri = NULL;
     GError *error;
     GFileCopyFlags flags;
     char *primary, *secondary, *details;
@@ -4902,7 +4908,7 @@ copy_move_file (CopyMoveJob   *copy_job,
 
     if (unique_names)
     {
-        dest = get_unique_target_file (src, dest_dir, job->cancellable, *dest_fs_type, unique_name_nr++);
+        dest = get_unique_target_file (src, dest_dir, job->cancellable, same_fs, *dest_fs_type, unique_name_nr++);
     }
     else if (copy_job->target_name != NULL)
     {
@@ -5070,6 +5076,8 @@ retry:
 
         if (debuting_files)
         {
+            dest_uri = g_file_get_uri (dest);
+
             g_hash_table_replace (debuting_files, g_object_ref (dest), GINT_TO_POINTER (!overwrite));
         }
         if (copy_job->is_move)
@@ -5106,7 +5114,7 @@ retry:
 
         if (unique_names)
         {
-            new_dest = get_unique_target_file (src, dest_dir, job->cancellable, *dest_fs_type, unique_name_nr);
+            new_dest = get_unique_target_file (src, dest_dir, job->cancellable, same_fs, *dest_fs_type, unique_name_nr);
         }
         else
         {
@@ -5141,7 +5149,7 @@ retry:
         if (unique_names)
         {
             g_object_unref (dest);
-            dest = get_unique_target_file (src, dest_dir, job->cancellable, *dest_fs_type, unique_name_nr++);
+            dest = get_unique_target_file (src, dest_dir, job->cancellable, same_fs, *dest_fs_type, unique_name_nr++);
             goto retry;
         }
 
@@ -5387,6 +5395,7 @@ copy_files (CopyMoveJob  *job,
     GList *l;
     GFile *src;
     gboolean same_fs;
+    int i;
     gboolean skipped_file;
     gboolean unique_names;
     GFile *dest;
@@ -5423,6 +5432,7 @@ copy_files (CopyMoveJob  *job,
     }
 
     unique_names = (job->destination == NULL);
+    i = 0;
     for (l = job->files;
          l != NULL && !job_aborted (common);
          l = l->next)
@@ -5461,6 +5471,7 @@ copy_files (CopyMoveJob  *job,
                 report_copy_progress (job, source_info, transfer_info);
             }
         }
+        i++;
     }
 
     g_free (dest_fs_type);
@@ -5535,7 +5546,10 @@ nautilus_file_operations_copy (GTask        *task,
     job = task_data;
     common = &job->common;
 
-    inhibit_power_manager ((CommonJob *) job, _("Copying Files"));
+    if (g_strcmp0 (g_getenv ("RUNNING_TESTS"), "TRUE"))
+    {
+        inhibit_power_manager ((CommonJob *) job, _("Copying Files"));
+    }
 
     if (!nautilus_file_undo_manager_is_operating ())
     {
@@ -5644,6 +5658,7 @@ nautilus_file_operations_copy_async (GList                          *files,
 
 static void
 report_preparing_move_progress (CopyMoveJob *move_job,
+                                int          total,
                                 int          left)
 {
     CommonJob *job;
@@ -5710,6 +5725,7 @@ move_file_prepare (CopyMoveJob  *move_job,
                    int           files_left)
 {
     GFile *dest, *new_dest;
+    g_autofree gchar *dest_uri = NULL;
     GError *error;
     CommonJob *job;
     gboolean overwrite;
@@ -5845,10 +5861,12 @@ retry:
     {
         if (debuting_files)
         {
-            g_hash_table_replace (debuting_files, dest, GINT_TO_POINTER (TRUE));
+            g_hash_table_replace (debuting_files, g_object_ref (dest), GINT_TO_POINTER (TRUE));
         }
 
         nautilus_file_changes_queue_file_moved (src, dest);
+
+        dest_uri = g_file_get_uri (dest);
 
         if (job->undo_info != NULL)
         {
@@ -6039,13 +6057,16 @@ move_files_prepare (CopyMoveJob  *job,
     GList *l;
     GFile *src;
     gboolean same_fs;
+    int i;
+    int total, left;
 
     common = &job->common;
 
-    int left = g_list_length (job->files);
+    total = left = g_list_length (job->files);
 
-    report_preparing_move_progress (job, left);
+    report_preparing_move_progress (job, total, left);
 
+    i = 0;
     for (l = job->files;
          l != NULL && !job_aborted (common);
          l = l->next)
@@ -6063,7 +6084,8 @@ move_files_prepare (CopyMoveJob  *job,
                            job->debuting_files,
                            fallbacks,
                            left);
-        report_preparing_move_progress (job, --left);
+        report_preparing_move_progress (job, total, --left);
+        i++;
     }
 
     *fallbacks = g_list_reverse (*fallbacks);
@@ -6081,12 +6103,14 @@ move_files (CopyMoveJob   *job,
     GList *l;
     GFile *src;
     gboolean same_fs;
+    int i;
     gboolean skipped_file;
     MoveFileCopyFallback *fallback;
     common = &job->common;
 
     report_copy_progress (job, source_info, transfer_info);
 
+    i = 0;
     for (l = fallbacks;
          l != NULL && !job_aborted (common);
          l = l->next)
@@ -6108,6 +6132,7 @@ move_files (CopyMoveJob   *job,
                         source_info, transfer_info,
                         job->debuting_files,
                         fallback->overwrite, &skipped_file, FALSE);
+        i++;
 
         if (skipped_file)
         {
@@ -6226,7 +6251,16 @@ nautilus_file_operations_move (GTask        *task,
 
     job = task_data;
 
-    inhibit_power_manager ((CommonJob *) job, _("Moving Files"));
+    /* Since we never initiate the app (in the case of
+     * testing), we can't inhibit its power manager.
+     * This would terminate the testing. So we avoid
+     * doing this by checking if the RUNNING_TESTS
+     * environment variable is set to "TRUE".
+     */
+    if (g_strcmp0 (g_getenv ("RUNNING_TESTS"), "TRUE"))
+    {
+        inhibit_power_manager ((CommonJob *) job, _("Moving Files"));
+    }
 
     if (!nautilus_file_undo_manager_is_operating ())
     {
@@ -6381,6 +6415,7 @@ link_file (CopyMoveJob  *job,
     GFile *src_dir;
     GFile *new_dest;
     g_autoptr (GFile) dest = NULL;
+    g_autofree gchar *dest_uri = NULL;
     int count;
     char *path;
     gboolean not_local;
@@ -6432,6 +6467,7 @@ retry:
         }
 
         nautilus_file_changes_queue_file_added (dest);
+        dest_uri = g_file_get_uri (dest);
 
         return;
     }
@@ -6970,7 +7006,7 @@ nautilus_file_operations_copy_move (const GList                    *item_uris,
         source_file_list = g_list_reverse (source_file_list);
         nautilus_tag_manager_star_files (nautilus_tag_manager_get (),
                                          G_OBJECT (parent_view),
-                                         source_file_list, NULL, NULL, NULL);
+                                         source_file_list, NULL, NULL);
     }
     else if (copy_action == GDK_ACTION_COPY)
     {
@@ -7448,8 +7484,6 @@ save_image_thread_func (GTask        *task,
     g_autoptr (GError) output_error = NULL;
     g_autoptr (GFileOutputStream) stream = NULL;
     g_autofree gchar *basename = g_strconcat (job->base_name, ".png", NULL);
-    gconstpointer bytes_buffer;
-    size_t bytes_len;
 
     for (size_t i = 1; stream == NULL; i += 1)
     {
@@ -7479,13 +7513,7 @@ save_image_thread_func (GTask        *task,
     bytes = gdk_texture_save_to_png_bytes (job->texture);
     nautilus_progress_info_set_progress (job->common.progress, .65, 1);
     nautilus_progress_info_set_details (job->common.progress, "");
-    bytes_buffer = g_bytes_get_data (bytes, &bytes_len);
-    g_output_stream_write_all (G_OUTPUT_STREAM (stream),
-                               bytes_buffer,
-                               bytes_len,
-                               NULL,
-                               job->common.cancellable,
-                               &output_error);
+    g_output_stream_write_bytes (G_OUTPUT_STREAM (stream), bytes, job->common.cancellable, &output_error);
     if (output_error == NULL)
     {
         job->success = TRUE;

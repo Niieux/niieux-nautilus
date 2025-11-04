@@ -101,7 +101,8 @@ nautilus_icon_info_class_init (NautilusIconInfoClass *icon_info_class)
 }
 
 NautilusIconInfo *
-nautilus_icon_info_new_for_paintable (GdkPaintable *paintable)
+nautilus_icon_info_new_for_paintable (GdkPaintable *paintable,
+                                      gint          scale)
 {
     NautilusIconInfo *icon;
 
@@ -116,13 +117,14 @@ nautilus_icon_info_new_for_paintable (GdkPaintable *paintable)
 }
 
 static NautilusIconInfo *
-nautilus_icon_info_new_for_icon_paintable (GtkIconPaintable *icon_paintable)
+nautilus_icon_info_new_for_icon_paintable (GtkIconPaintable *icon_paintable,
+                                           gint              scale)
 {
     NautilusIconInfo *icon;
     g_autoptr (GFile) file = NULL;
     char *basename, *p;
 
-    icon = nautilus_icon_info_new_for_paintable (GDK_PAINTABLE (icon_paintable));
+    icon = nautilus_icon_info_new_for_paintable (GDK_PAINTABLE (icon_paintable), scale);
 
     file = gtk_icon_paintable_get_file (icon_paintable);
     if (file != NULL)
@@ -415,7 +417,7 @@ nautilus_icon_info_lookup (GIcon *icon,
             paintable = gtk_snapshot_to_paintable (snapshot, NULL);
         }
 
-        icon_info = nautilus_icon_info_new_for_paintable (paintable);
+        icon_info = nautilus_icon_info_new_for_paintable (paintable, scale);
 
         key = loadable_icon_key_new (icon, scale, size);
         g_hash_table_insert (loadable_icon_cache, key, icon_info);
@@ -426,7 +428,7 @@ nautilus_icon_info_lookup (GIcon *icon,
     GtkIconTheme *theme = gtk_icon_theme_get_for_display (gdk_display_get_default ());
     if (!gtk_icon_theme_has_gicon (theme, icon))
     {
-        return nautilus_icon_info_new_for_paintable (NULL);
+        return nautilus_icon_info_new_for_paintable (NULL, scale);
     }
 
     icon_paintable = lookup_themed_icon (theme, icon, size, scale);
@@ -455,7 +457,7 @@ nautilus_icon_info_lookup (GIcon *icon,
         icon_info = g_hash_table_lookup (themed_icon_cache, &lookup_key);
         if (!icon_info)
         {
-            icon_info = nautilus_icon_info_new_for_icon_paintable (icon_paintable);
+            icon_info = nautilus_icon_info_new_for_icon_paintable (icon_paintable, scale);
 
             key = themed_icon_key_new (icon_name, scale, size);
             g_hash_table_insert (themed_icon_cache, key, icon_info);
@@ -465,7 +467,7 @@ nautilus_icon_info_lookup (GIcon *icon,
     }
     else
     {
-        return nautilus_icon_info_new_for_icon_paintable (icon_paintable);
+        return nautilus_icon_info_new_for_icon_paintable (icon_paintable, scale);
     }
 }
 
@@ -502,7 +504,7 @@ nautilus_icon_info_get_paintable (NautilusIconInfo *icon)
     res = nautilus_icon_info_get_paintable_nodefault (icon);
     if (res == NULL)
     {
-        res = GDK_PAINTABLE (gdk_texture_new_from_resource ("/org/gnome/nautilus/image/text-x-preview.png"));
+        res = GDK_PAINTABLE (gdk_texture_new_from_resource ("/org/gnome/nautilus/text-x-preview.png"));
     }
 
     return res;
@@ -521,7 +523,7 @@ nautilus_icon_info_get_texture (NautilusIconInfo *icon)
     }
     else
     {
-        res = gdk_texture_new_from_resource ("/org/gnome/nautilus/image/text-x-preview.png");
+        res = gdk_texture_new_from_resource ("/org/gnome/nautilus/text-x-preview.png");
     }
 
     return res;

@@ -50,7 +50,8 @@ NautilusWindowSlot * nautilus_window_slot_new              (NautilusMode        
 
 void nautilus_window_slot_open_location_full               (NautilusWindowSlot *slot,
                                                             GFile              *location,
-                                                            NautilusFileList   *new_selection);
+                                                            NautilusOpenFlags   flags,
+                                                            GList              *new_selection);
 
 GtkFilter *nautilus_window_slot_get_filter                 (NautilusWindowSlot *slot);
 void nautilus_window_slot_set_filter                       (NautilusWindowSlot *slot,
@@ -114,7 +115,7 @@ NautilusNavigationState* nautilus_window_slot_get_navigation_state (NautilusWind
 NautilusQueryEditor *nautilus_window_slot_get_query_editor (NautilusWindowSlot *self);
 
 /* Only used by slot-dnd */
-NautilusFilesView*  nautilus_window_slot_get_current_view  (NautilusWindowSlot *slot);
+NautilusView*  nautilus_window_slot_get_current_view       (NautilusWindowSlot *slot);
 
 void nautilus_window_slot_back_or_forward                  (NautilusWindowSlot *slot,
                                                             gboolean            back,

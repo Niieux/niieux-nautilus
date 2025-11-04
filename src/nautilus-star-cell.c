@@ -5,11 +5,7 @@
  */
 
 #include "nautilus-star-cell.h"
-
-#include "nautilus-file.h"
 #include "nautilus-tag-manager.h"
-#include "nautilus-view-cell.h"
-#include "nautilus-view-item.h"
 
 #include <glib/gi18n.h>
 
@@ -42,8 +38,7 @@ toggle_star (NautilusStarCell *self)
         nautilus_tag_manager_unstar_files (tag_manager,
                                            G_OBJECT (item),
                                            &(GList){ .data = file },
-                                           (GAsyncReadyCallback) nautilus_tag_manager_announce_unstarred_cb,
-                                           self->star,
+                                           NULL,
                                            NULL);
         gtk_widget_remove_css_class (GTK_WIDGET (self->star), "starred");
     }
@@ -52,8 +47,7 @@ toggle_star (NautilusStarCell *self)
         nautilus_tag_manager_star_files (tag_manager,
                                          G_OBJECT (item),
                                          &(GList){ .data = file },
-                                         (GAsyncReadyCallback) nautilus_tag_manager_announce_starred_cb,
-                                         self->star,
+                                         NULL,
                                          NULL);
         gtk_widget_add_css_class (GTK_WIDGET (self->star), "starred");
     }
@@ -69,7 +63,7 @@ update_star (GtkButton    *star,
     g_autofree gchar *file_uri = nautilus_file_get_uri (file);
     gboolean is_starred = nautilus_tag_manager_file_is_starred (nautilus_tag_manager_get (),
                                                                 file_uri);
-    const gchar *tooltip = is_starred ? _("Unstar") : C_("Verb", "Star");
+    const gchar *tooltip = is_starred ? _("Unstar") : _("Star");
 
     /* Setting the tooltip is somewhat expensive as it involves system calls, so only
      * update UI on change. */
@@ -128,7 +122,7 @@ nautilus_star_cell_init (NautilusStarCell *self)
     gtk_widget_add_css_class (star, "star");
     gtk_widget_add_css_class (star, "flat");
     gtk_widget_add_css_class (star, "circular");
-    gtk_widget_set_parent (star, GTK_WIDGET (self));
+    adw_bin_set_child (ADW_BIN (self), star);
     self->star = GTK_BUTTON (star);
 
     g_signal_connect_swapped (self->star, "clicked", G_CALLBACK (toggle_star), self);
@@ -150,28 +144,20 @@ nautilus_star_cell_init (NautilusStarCell *self)
 }
 
 static void
-nautilus_star_cell_dispose (GObject *object)
+nautilus_star_cell_finalize (GObject *object)
 {
     NautilusStarCell *self = (NautilusStarCell *) object;
 
-    g_clear_object (&self->item_signal_group);
-    if (self->star)
-    {
-        gtk_widget_unparent (GTK_WIDGET (self->star));
-        self->star = NULL;
-    }
-    G_OBJECT_CLASS (nautilus_star_cell_parent_class)->dispose (object);
+    g_object_unref (self->item_signal_group);
+    G_OBJECT_CLASS (nautilus_star_cell_parent_class)->finalize (object);
 }
 
 static void
 nautilus_star_cell_class_init (NautilusStarCellClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
-    GtkWidgetClass *widget_class = GTK_WIDGET_CLASS (klass);
 
-    object_class->dispose = nautilus_star_cell_dispose;
-
-    gtk_widget_class_set_layout_manager_type (widget_class, GTK_TYPE_BIN_LAYOUT);
+    object_class->finalize = nautilus_star_cell_finalize;
 }
 
 NautilusViewCell *

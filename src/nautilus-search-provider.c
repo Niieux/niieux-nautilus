@@ -18,9 +18,7 @@
 
 #include <config.h>
 #include "nautilus-search-provider.h"
-
 #include "nautilus-enum-types.h"
-#include "nautilus-query.h"
 
 #include <glib-object.h>
 
@@ -39,6 +37,18 @@ G_DEFINE_INTERFACE (NautilusSearchProvider, nautilus_search_provider, G_TYPE_OBJ
 static void
 nautilus_search_provider_default_init (NautilusSearchProviderInterface *iface)
 {
+    /**
+     * NautilusSearchProvider::running:
+     *
+     * Whether the provider is running a search.
+     */
+    g_object_interface_install_property (iface,
+                                         g_param_spec_boolean ("running",
+                                                               "Whether the provider is running",
+                                                               "Whether the provider is running a search",
+                                                               FALSE,
+                                                               G_PARAM_READABLE));
+
     signals[HITS_ADDED] = g_signal_new ("hits-added",
                                         NAUTILUS_TYPE_SEARCH_PROVIDER,
                                         G_SIGNAL_RUN_LAST,
@@ -67,15 +77,24 @@ nautilus_search_provider_default_init (NautilusSearchProviderInterface *iface)
                                    G_TYPE_STRING);
 }
 
-gboolean
-nautilus_search_provider_start (NautilusSearchProvider *provider,
-                                NautilusQuery          *query)
+void
+nautilus_search_provider_set_query (NautilusSearchProvider *provider,
+                                    NautilusQuery          *query)
 {
-    g_return_val_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider), FALSE);
-    g_return_val_if_fail (NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->start != NULL, FALSE);
-    g_return_val_if_fail (NAUTILUS_IS_QUERY (query), FALSE);
+    g_return_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider));
+    g_return_if_fail (NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->set_query != NULL);
+    g_return_if_fail (NAUTILUS_IS_QUERY (query));
 
-    return NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->start (provider, query);
+    NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->set_query (provider, query);
+}
+
+void
+nautilus_search_provider_start (NautilusSearchProvider *provider)
+{
+    g_return_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider));
+    g_return_if_fail (NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->start != NULL);
+
+    NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->start (provider);
 }
 
 void
@@ -87,14 +106,9 @@ nautilus_search_provider_stop (NautilusSearchProvider *provider)
     NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->stop (provider);
 }
 
-/**
- * nautilus_search_provider_hits_added:
- * @provider: search provider
- * @hits: (transfer full): list of #NautilusSearchHit
- */
 void
 nautilus_search_provider_hits_added (NautilusSearchProvider *provider,
-                                     GPtrArray              *hits)
+                                     GList                  *hits)
 {
     g_return_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider));
 
@@ -119,4 +133,13 @@ nautilus_search_provider_error (NautilusSearchProvider *provider,
     g_warning ("Provider %s failed with error %s\n",
                G_OBJECT_TYPE_NAME (provider), error_message);
     g_signal_emit (provider, signals[ERROR], 0, error_message);
+}
+
+gboolean
+nautilus_search_provider_is_running (NautilusSearchProvider *provider)
+{
+    g_return_val_if_fail (NAUTILUS_IS_SEARCH_PROVIDER (provider), FALSE);
+    g_return_val_if_fail (NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->is_running, FALSE);
+
+    return NAUTILUS_SEARCH_PROVIDER_GET_IFACE (provider)->is_running (provider);
 }

@@ -23,7 +23,6 @@
 #include <config.h>
 #include "nautilus-search-engine-simple.h"
 
-#include "nautilus-query.h"
 #include "nautilus-search-hit.h"
 #include "nautilus-search-provider.h"
 #include "nautilus-ui-utilities.h"
@@ -34,6 +33,13 @@
 
 #define BATCH_SIZE 500
 #define CREATE_THREAD_DELAY_MS 500
+
+enum
+{
+    PROP_0,
+    PROP_RUNNING,
+    NUM_PROPERTIES
+};
 
 typedef struct
 {
@@ -48,7 +54,7 @@ typedef struct
     GHashTable *visited;
 
     gint n_processed_files;
-    GPtrArray *hits;
+    GList *hits;
 
     NautilusQuery *query;
     gint processing_id;
@@ -113,6 +119,8 @@ search_thread_data_new (NautilusSearchEngineSimple *engine,
 static void
 search_thread_data_free (SearchThreadData *data)
 {
+    GList *hits;
+
     g_queue_foreach (data->directories,
                      (GFunc) g_object_unref, NULL);
     g_queue_free (data->directories);
@@ -120,14 +128,13 @@ search_thread_data_free (SearchThreadData *data)
     g_object_unref (data->cancellable);
     g_object_unref (data->query);
     g_clear_pointer (&data->mime_types, g_ptr_array_unref);
-    g_clear_pointer (&data->hits, g_ptr_array_unref);
+    g_list_free_full (data->hits, g_object_unref);
     g_object_unref (data->engine);
     g_mutex_clear (&data->idle_mutex);
 
-    GPtrArray *hits;
     while ((hits = g_queue_pop_head (data->idle_queue)))
     {
-        g_ptr_array_unref (hits);
+        g_list_free_full (hits, g_object_unref);
     }
     g_queue_free (data->idle_queue);
 
@@ -151,6 +158,8 @@ search_thread_done (SearchThreadData *data)
     nautilus_search_provider_finished (NAUTILUS_SEARCH_PROVIDER (engine),
                                        NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL);
 
+    g_object_notify (G_OBJECT (engine), "running");
+
     search_thread_data_free (data);
 
     return G_SOURCE_REMOVE;
@@ -158,36 +167,28 @@ search_thread_done (SearchThreadData *data)
 
 static void
 search_thread_process_hits_idle (SearchThreadData *data,
-                                 GPtrArray        *hits)
+                                 GList            *hits)
 {
-    if (hits == NULL)
-    {
-        return;
-    }
-
     if (!g_cancellable_is_cancelled (data->cancellable))
     {
         g_debug ("Simple engine add hits");
-
         nautilus_search_provider_hits_added (NAUTILUS_SEARCH_PROVIDER (data->engine),
-                                             g_steal_pointer (&hits));
+                                             hits);
     }
-
-    g_clear_pointer (&hits, g_ptr_array_unref);
 }
 
 static gboolean
 search_thread_process_idle (gpointer user_data)
 {
     SearchThreadData *thread_data;
-    g_autoptr (GPtrArray) hits = NULL;
+    GList *hits;
 
     thread_data = user_data;
 
     g_mutex_lock (&thread_data->idle_mutex);
     hits = g_queue_pop_head (thread_data->idle_queue);
     /* Even if the cancellable is cancelled, we need to make sure the search
-     * thread has acknowledge it, and therefore not using the thread data after
+     * thread has aknowledge it, and therefore not using the thread data after
      * freeing it. The search thread will mark as finished whenever the search
      * is finished or cancelled.
      * Nonetheless, we should stop yielding results if the search was cancelled
@@ -198,6 +199,10 @@ search_thread_process_idle (gpointer user_data)
         {
             g_mutex_unlock (&thread_data->idle_mutex);
 
+            if (hits)
+            {
+                g_list_free_full (hits, g_object_unref);
+            }
             search_thread_done (thread_data);
 
             return G_SOURCE_REMOVE;
@@ -206,7 +211,11 @@ search_thread_process_idle (gpointer user_data)
 
     g_mutex_unlock (&thread_data->idle_mutex);
 
-    search_thread_process_hits_idle (thread_data, g_steal_pointer (&hits));
+    if (hits)
+    {
+        search_thread_process_hits_idle (thread_data, hits);
+        g_list_free_full (hits, g_object_unref);
+    }
 
     return G_SOURCE_CONTINUE;
 }
@@ -218,7 +227,7 @@ finish_search_thread (SearchThreadData *thread_data)
     thread_data->finished = TRUE;
     g_mutex_unlock (&thread_data->idle_mutex);
 
-    /* If no results were processed, directly finish the search, in the main
+    /* If no results were processed, direclty finish the search, in the main
      * thread.
      */
     if (thread_data->processing_id == 0)
@@ -229,7 +238,7 @@ finish_search_thread (SearchThreadData *thread_data)
 
 static void
 process_batch_in_idle (SearchThreadData *thread_data,
-                       GPtrArray        *hits)
+                       GList            *hits)
 {
     g_return_if_fail (hits != NULL);
 
@@ -271,7 +280,8 @@ visit_directory (GFile            *dir,
                  SearchThreadData *data)
 {
     g_autoptr (GPtrArray) date_range = NULL;
-    NautilusSearchTimeType type;
+    NautilusQuerySearchType type;
+    NautilusQueryRecursive recursive_flag;
     GFileEnumerator *enumerator;
     GFileInfo *info;
     GFile *child;
@@ -301,10 +311,8 @@ visit_directory (GFile            *dir,
     }
 
     type = nautilus_query_get_search_type (data->query);
+    recursive_flag = nautilus_query_get_recursive (data->query);
     date_range = nautilus_query_get_date_range (data->query);
-
-    gboolean recursion_enabled = nautilus_query_recursive (data->query);
-    gboolean per_location_recursive_check = nautilus_query_recursive_local_only (data->query);
 
     while ((info = g_file_enumerator_next_file (enumerator, data->cancellable, NULL)) != NULL)
     {
@@ -371,19 +379,19 @@ visit_directory (GFile            *dir,
 
             switch (type)
             {
-                case NAUTILUS_SEARCH_TIME_TYPE_LAST_ACCESS:
+                case NAUTILUS_QUERY_SEARCH_TYPE_LAST_ACCESS:
                 {
                     target_date = atime;
                 }
                 break;
 
-                case NAUTILUS_SEARCH_TIME_TYPE_LAST_MODIFIED:
+                case NAUTILUS_QUERY_SEARCH_TYPE_LAST_MODIFIED:
                 {
                     target_date = mtime;
                 }
                 break;
 
-                case NAUTILUS_SEARCH_TIME_TYPE_CREATED:
+                case NAUTILUS_QUERY_SEARCH_TYPE_CREATED:
                 {
                     target_date = ctime;
                 }
@@ -412,12 +420,7 @@ visit_directory (GFile            *dir,
             nautilus_search_hit_set_access_time (hit, atime);
             nautilus_search_hit_set_creation_time (hit, ctime);
 
-            if (G_UNLIKELY (data->hits == NULL))
-            {
-                data->hits = g_ptr_array_new_with_free_func (g_object_unref);
-            }
-
-            g_ptr_array_add (data->hits, hit);
+            data->hits = g_list_prepend (data->hits, hit);
         }
 
         data->n_processed_files++;
@@ -426,10 +429,14 @@ visit_directory (GFile            *dir,
             send_batch_in_idle (data);
         }
 
-        if (recursion_enabled &&
+        if (recursive_flag != NAUTILUS_QUERY_RECURSIVE_NEVER &&
             g_file_info_get_file_type (info) == G_FILE_TYPE_DIRECTORY)
         {
-            if (per_location_recursive_check)
+            if (recursive_flag == NAUTILUS_QUERY_RECURSIVE_ALWAYS)
+            {
+                recursive = TRUE;
+            }
+            else if (recursive_flag == NAUTILUS_QUERY_RECURSIVE_LOCAL_ONLY)
             {
                 g_autoptr (GFileInfo) file_system_info = NULL;
 
@@ -441,10 +448,6 @@ visit_directory (GFile            *dir,
                     recursive = !g_file_info_get_attribute_boolean (file_system_info,
                                                                     G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
                 }
-            }
-            else
-            {
-                recursive = TRUE;
             }
         }
 
@@ -529,26 +532,18 @@ create_thread_timeout (gpointer user_data)
     thread = g_thread_new ("nautilus-search-simple", search_thread_func, simple->active_search);
 }
 
-static gboolean
-search_engine_simple_start (NautilusSearchProvider *provider,
-                            NautilusQuery          *query)
+static void
+nautilus_search_engine_simple_start (NautilusSearchProvider *provider)
 {
     NautilusSearchEngineSimple *simple;
     SearchThreadData *data;
+    g_autoptr (GFile) location = NULL;
 
     simple = NAUTILUS_SEARCH_ENGINE_SIMPLE (provider);
 
-    g_set_object (&simple->query, query);
-
     if (simple->active_search != NULL)
     {
-        return FALSE;
-    }
-
-    g_autoptr (GFile) location = nautilus_query_get_location (simple->query);
-    if (location == NULL)
-    {
-        return FALSE;
+        return;
     }
 
     g_debug ("Simple engine start");
@@ -556,14 +551,21 @@ search_engine_simple_start (NautilusSearchProvider *provider,
     data = search_thread_data_new (simple, simple->query);
 
     simple->active_search = data;
+    g_object_notify (G_OBJECT (provider), "running");
+
+    location = nautilus_query_get_location (simple->query);
+    if (location == NULL)
+    {
+        /* Global search. Nothing for this engine to do.*/
+        finish_search_thread (data);
+        return;
+    }
 
     g_queue_push_tail (data->directories, g_steal_pointer (&location));
 
     simple->create_thread_timeout_id = g_timeout_add_once (CREATE_THREAD_DELAY_MS,
                                                            create_thread_timeout,
                                                            simple);
-
-    return TRUE;
 }
 
 static void
@@ -587,10 +589,51 @@ nautilus_search_engine_simple_stop (NautilusSearchProvider *provider)
 }
 
 static void
+nautilus_search_engine_simple_set_query (NautilusSearchProvider *provider,
+                                         NautilusQuery          *query)
+{
+    NautilusSearchEngineSimple *simple = NAUTILUS_SEARCH_ENGINE_SIMPLE (provider);
+
+    g_clear_object (&simple->query);
+
+    simple->query = g_object_ref (query);
+}
+
+static gboolean
+nautilus_search_engine_simple_is_running (NautilusSearchProvider *provider)
+{
+    NautilusSearchEngineSimple *simple;
+
+    simple = NAUTILUS_SEARCH_ENGINE_SIMPLE (provider);
+
+    return simple->active_search != NULL;
+}
+
+static void
+nautilus_search_engine_simple_get_property (GObject    *object,
+                                            guint       arg_id,
+                                            GValue     *value,
+                                            GParamSpec *pspec)
+{
+    NautilusSearchEngineSimple *engine = NAUTILUS_SEARCH_ENGINE_SIMPLE (object);
+
+    switch (arg_id)
+    {
+        case PROP_RUNNING:
+        {
+            g_value_set_boolean (value, nautilus_search_engine_simple_is_running (NAUTILUS_SEARCH_PROVIDER (engine)));
+        }
+        break;
+    }
+}
+
+static void
 nautilus_search_provider_init (NautilusSearchProviderInterface *iface)
 {
-    iface->start = search_engine_simple_start;
+    iface->set_query = nautilus_search_engine_simple_set_query;
+    iface->start = nautilus_search_engine_simple_start;
     iface->stop = nautilus_search_engine_simple_stop;
+    iface->is_running = nautilus_search_engine_simple_is_running;
 }
 
 static void
@@ -600,6 +643,14 @@ nautilus_search_engine_simple_class_init (NautilusSearchEngineSimpleClass *class
 
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = finalize;
+    gobject_class->get_property = nautilus_search_engine_simple_get_property;
+
+    /**
+     * NautilusSearchEngine::running:
+     *
+     * Whether the search engine is running a search.
+     */
+    g_object_class_override_property (gobject_class, PROP_RUNNING, "running");
 }
 
 static void

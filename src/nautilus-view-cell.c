@@ -5,9 +5,7 @@
  */
 
 #include "nautilus-view-cell.h"
-
 #include "nautilus-list-base.h"
-#include "nautilus-view-item.h"
 
 /**
  * NautilusViewCell:
@@ -24,7 +22,7 @@
 typedef struct _NautilusViewCellPrivate NautilusViewCellPrivate;
 struct _NautilusViewCellPrivate
 {
-    GtkWidget parent_instance;
+    AdwBin parent_instance;
 
     NautilusListBase *view; /* Unowned */
     NautilusViewItem *item; /* Owned reference */
@@ -36,7 +34,7 @@ struct _NautilusViewCellPrivate
 };
 
 
-G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (NautilusViewCell, nautilus_view_cell, GTK_TYPE_WIDGET)
+G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE (NautilusViewCell, nautilus_view_cell, ADW_TYPE_BIN)
 
 enum
 {
@@ -141,7 +139,7 @@ nautilus_view_cell_init (NautilusViewCell *self)
 }
 
 static void
-nautilus_view_cell_dispose (GObject *object)
+nautilus_view_cell_finalize (GObject *object)
 {
     NautilusViewCell *self = NAUTILUS_VIEW_CELL (object);
     NautilusViewCellPrivate *priv = nautilus_view_cell_get_instance_private (self);
@@ -149,7 +147,7 @@ nautilus_view_cell_dispose (GObject *object)
     g_clear_object (&priv->item);
     g_clear_weak_pointer (&priv->view);
 
-    G_OBJECT_CLASS (nautilus_view_cell_parent_class)->dispose (object);
+    G_OBJECT_CLASS (nautilus_view_cell_parent_class)->finalize (object);
 }
 
 static void
@@ -157,7 +155,7 @@ nautilus_view_cell_class_init (NautilusViewCellClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS (klass);
 
-    object_class->dispose = nautilus_view_cell_dispose;
+    object_class->finalize = nautilus_view_cell_finalize;
     object_class->get_property = nautilus_view_cell_get_property;
     object_class->set_property = nautilus_view_cell_set_property;
 
@@ -227,10 +225,13 @@ nautilus_view_cell_set_item (NautilusViewCell *self,
 NautilusViewItem *
 nautilus_view_cell_get_item (NautilusViewCell *self)
 {
+    NautilusViewItem *item;
+
     g_return_val_if_fail (NAUTILUS_IS_VIEW_CELL (self), NULL);
 
-    NautilusViewCellPrivate *priv = nautilus_view_cell_get_instance_private (self);
+    /* This gets a full reference. */
+    g_object_get (self, "item", &item, NULL);
 
     /* Return full reference for consistency with gtk_tree_list_row_get_item() */
-    return priv->item != NULL ? g_object_ref (priv->item) : NULL;
+    return item;
 }

@@ -22,20 +22,17 @@
  */
 
 #include <config.h>
-#include "nautilus-search-provider.h"
 
 #include <gio/gio.h>
 #include <string.h>
 #include <glib/gi18n.h>
 #include <gdk/gdk.h>
 
-#include "nautilus-bookmark.h"
 #include "nautilus-file.h"
 #include "nautilus-file-utilities.h"
-#include "nautilus-query.h"
 #include "nautilus-scheme.h"
 #include "nautilus-search-engine.h"
-#include "nautilus-search-hit.h"
+#include "nautilus-search-provider.h"
 #include "nautilus-ui-utilities.h"
 
 #include "nautilus-application.h"
@@ -69,6 +66,54 @@ struct _NautilusShellSearchProvider
 };
 
 G_DEFINE_TYPE (NautilusShellSearchProvider, nautilus_shell_search_provider, G_TYPE_OBJECT)
+
+static const char *
+get_display_name (NautilusShellSearchProvider *self,
+                  NautilusFile                *file)
+{
+    GFile *location;
+    NautilusBookmark *bookmark;
+    NautilusBookmarkList *bookmarks;
+
+    bookmarks = nautilus_application_get_bookmarks (NAUTILUS_APPLICATION (g_application_get_default ()));
+
+    location = nautilus_file_get_location (file);
+    bookmark = nautilus_bookmark_list_item_with_location (bookmarks, location, NULL);
+    g_object_unref (location);
+
+    if (bookmark)
+    {
+        return nautilus_bookmark_get_name (bookmark);
+    }
+    else
+    {
+        return nautilus_file_get_display_name (file);
+    }
+}
+
+static GIcon *
+get_gicon (NautilusShellSearchProvider *self,
+           NautilusFile                *file)
+{
+    GFile *location;
+    NautilusBookmark *bookmark;
+    NautilusBookmarkList *bookmarks;
+
+    bookmarks = nautilus_application_get_bookmarks (NAUTILUS_APPLICATION (g_application_get_default ()));
+
+    location = nautilus_file_get_location (file);
+    bookmark = nautilus_bookmark_list_item_with_location (bookmarks, location, NULL);
+    g_object_unref (location);
+
+    if (bookmark)
+    {
+        return nautilus_bookmark_get_icon (bookmark);
+    }
+    else
+    {
+        return nautilus_file_get_gicon (file, 0);
+    }
+}
 
 static void
 pending_search_free (PendingSearch *search)
@@ -134,28 +179,25 @@ cancel_current_search_ignoring_partial_results (NautilusShellSearchProvider *sel
 
 static void
 search_hits_added_cb (NautilusSearchEngine *engine,
-                      GPtrArray            *transferred_hits,
+                      GList                *hits,
                       gpointer              user_data)
 {
-    g_autoptr (GPtrArray) hits = transferred_hits;
     PendingSearch *search = user_data;
+    GList *l;
+    NautilusSearchHit *hit;
     const gchar *hit_uri;
     g_autoptr (GDateTime) now = g_date_time_new_now_local ();
 
     g_debug ("*** Search engine hits added");
 
-    while (hits->len > 0)
+    for (l = hits; l != NULL; l = l->next)
     {
-        guint index = hits->len - 1;
-        NautilusSearchHit *hit = hits->pdata[index];
-
-        nautilus_search_hit_compute_scores (hit, now, NULL);
+        hit = l->data;
+        nautilus_search_hit_compute_scores (hit, now, search->query);
         hit_uri = nautilus_search_hit_get_uri (hit);
         g_debug ("    %s", hit_uri);
 
-        g_hash_table_replace (search->hits,
-                              g_strdup (hit_uri),
-                              g_ptr_array_steal_index (hits, index));
+        g_hash_table_replace (search->hits, g_strdup (hit_uri), g_object_ref (hit));
     }
 }
 
@@ -190,7 +232,7 @@ search_finished_cb (NautilusSearchEngine         *engine,
                     gpointer                      user_data)
 {
     PendingSearch *search = user_data;
-    g_autoptr (GPtrArray) hits = NULL;
+    GList *hits, *l;
     NautilusSearchHit *hit;
     GVariantBuilder builder;
     gint64 current_time;
@@ -199,17 +241,18 @@ search_finished_cb (NautilusSearchEngine         *engine,
     g_debug ("*** Search engine search finished - time elapsed %dms",
              (gint) ((current_time - search->start_time) / 1000));
 
-    hits = g_hash_table_get_values_as_ptr_array (search->hits);
-    g_ptr_array_sort_values (hits, search_hit_compare_relevance);
+    hits = g_hash_table_get_values (search->hits);
+    hits = g_list_sort (hits, search_hit_compare_relevance);
 
     g_variant_builder_init (&builder, G_VARIANT_TYPE ("as"));
 
-    for (uint i = 0; i < hits->len; i++)
+    for (l = hits; l != NULL; l = l->next)
     {
-        hit = hits->pdata[i];
+        hit = l->data;
         g_variant_builder_add (&builder, "s", nautilus_search_hit_get_uri (hit));
     }
 
+    g_list_free (hits);
     pending_search_finish (search, search->invocation,
                            g_variant_new ("(as)", &builder));
 }
@@ -403,7 +446,7 @@ search_add_volumes_and_bookmarks (PendingSearch *search)
         {
             hit = nautilus_search_hit_new (candidate->uri);
             nautilus_search_hit_set_fts_rank (hit, match);
-            nautilus_search_hit_compute_scores (hit, now, NULL);
+            nautilus_search_hit_compute_scores (hit, now, search->query);
             g_hash_table_replace (search->hits, g_strdup (candidate->uri), hit);
         }
     }
@@ -423,6 +466,7 @@ shell_query_new (gchar **terms)
     nautilus_query_set_text (query, terms_joined);
     /* Global search is not limited by location. */
     nautilus_query_set_location (query, NULL);
+    nautilus_query_set_recursive (query, NAUTILUS_QUERY_RECURSIVE_INDEXED_ONLY);
 
     return query;
 }
@@ -452,7 +496,7 @@ execute_search (NautilusShellSearchProvider  *self,
     pending_search->invocation = g_object_ref (invocation);
     pending_search->hits = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
     pending_search->query = query;
-    pending_search->engine = nautilus_search_engine_new (NAUTILUS_SEARCH_TYPE_GLOBAL);
+    pending_search->engine = nautilus_search_engine_new ();
     pending_search->start_time = g_get_monotonic_time ();
     pending_search->self = self;
 
@@ -470,8 +514,10 @@ execute_search (NautilusShellSearchProvider  *self,
 
     /* start searching */
     g_debug ("*** Search engine search started");
-    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (pending_search->engine),
-                                    query);
+    nautilus_search_engine_enable_recent (pending_search->engine);
+    nautilus_search_provider_set_query (NAUTILUS_SEARCH_PROVIDER (pending_search->engine),
+                                        query);
+    nautilus_search_provider_start (NAUTILUS_SEARCH_PROVIDER (pending_search->engine));
 }
 
 static gboolean
@@ -574,29 +620,32 @@ result_list_attributes_ready_cb (GList    *file_list,
                                  gpointer  user_data)
 {
     ResultMetasData *data = user_data;
+    GVariantBuilder meta;
+    NautilusFile *file;
+    GList *l;
+    gchar *uri;
+    const char *display_name;
+    gchar *path, *description;
+    GIcon *gicon;
+    GFile *location;
+    GVariant *meta_variant;
+    gint icon_scale;
 
-    /* Get scale of monitor 0, which is assumed to be the one that shows the shell */
-    g_autoptr (GdkMonitor) shell_monitor =
-        g_list_model_get_item (gdk_display_get_monitors (gdk_display_get_default ()), 0);
-    int icon_scale = gdk_monitor_get_scale_factor (shell_monitor);
+    icon_scale = gdk_monitor_get_scale_factor (g_list_model_get_item (gdk_display_get_monitors (gdk_display_get_default ()), 0));
 
-    NautilusBookmarkList *bookmarks = nautilus_application_get_bookmarks (NAUTILUS_APPLICATION (g_application_get_default ()));
-
-    for (GList *l = file_list; l != NULL; l = l->next)
+    for (l = file_list; l != NULL; l = l->next)
     {
-        NautilusFile *file = l->data;
-        g_autoptr (GFile) file_location = nautilus_file_get_location (file);
-        g_auto (GVariantBuilder) meta = G_VARIANT_BUILDER_INIT (G_VARIANT_TYPE_VARDICT);
+        g_autoptr (GFile) file_location = NULL;
+        g_autoptr (GVariant) icon_variant = NULL;
 
-        g_autofree char *uri = nautilus_file_get_uri (file);
-        NautilusBookmark *bookmark = nautilus_bookmark_list_get_bookmark (bookmarks,
-                                                                          file_location);
-        const char *display_name = (bookmark != NULL)
-                                   ? nautilus_bookmark_get_name (bookmark)
-                                   : nautilus_file_get_display_name (file);
+        file = l->data;
+        g_variant_builder_init (&meta, G_VARIANT_TYPE ("a{sv}"));
 
-        g_autofree gchar *path = g_file_get_path (file_location);
-        g_autofree gchar *description = (path != NULL ? g_path_get_dirname (path) : NULL);
+        uri = nautilus_file_get_uri (file);
+        display_name = get_display_name (data->self, file);
+        file_location = nautilus_file_get_location (file);
+        path = g_file_get_path (file_location);
+        description = path ? g_path_get_dirname (path) : NULL;
 
         g_variant_builder_add (&meta, "{sv}",
                                "id", g_variant_new_string (uri));
@@ -606,20 +655,19 @@ result_list_attributes_ready_cb (GList    *file_list,
         g_variant_builder_add (&meta, "{sv}",
                                "description", g_variant_new_string (description ? description : uri));
 
-        g_autoptr (GIcon) gicon = NULL;
+        gicon = NULL;
+
         const char *thumbnail_path = nautilus_file_get_thumbnail_path (file);
         if (thumbnail_path != NULL)
         {
-            g_autoptr (GFile) location = g_file_new_for_path (thumbnail_path);
+            location = g_file_new_for_path (thumbnail_path);
             gicon = g_file_icon_new (location);
-        }
-        else if (bookmark != NULL)
-        {
-            gicon = nautilus_bookmark_get_icon (bookmark);
+
+            g_object_unref (location);
         }
         else
         {
-            gicon = nautilus_file_get_gicon (file, 0);
+            gicon = get_gicon (data->self, file);
         }
 
         if (gicon == NULL)
@@ -629,13 +677,18 @@ result_list_attributes_ready_cb (GList    *file_list,
                                                             NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS));
         }
 
-        g_autoptr (GVariant) icon_variant = g_icon_serialize (gicon);
+        icon_variant = g_icon_serialize (gicon);
         g_variant_builder_add (&meta, "{sv}",
                                "icon", icon_variant);
+        g_object_unref (gicon);
 
-        GVariant *meta_variant = g_variant_builder_end (&meta);
+        meta_variant = g_variant_builder_end (&meta);
         g_hash_table_insert (data->self->metas_cache,
-                             g_steal_pointer (&uri), g_variant_ref_sink (meta_variant));
+                             g_strdup (uri), g_variant_ref_sink (meta_variant));
+
+        g_free (path);
+        g_free (description);
+        g_free (uri);
     }
 
     data->handle = NULL;

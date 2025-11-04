@@ -12,7 +12,6 @@
 
 #include "nautilus-directory.h"
 #include "nautilus-dnd.h"
-#include "nautilus-file.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-files-view.h"
 #include "nautilus-files-view-dnd.h"

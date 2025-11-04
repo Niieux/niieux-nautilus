@@ -23,7 +23,6 @@
 #include <config.h>
 #include "nautilus-program-choosing.h"
 
-#include "nautilus-file.h"
 #include "nautilus-global-preferences.h"
 #include "nautilus-icon-info.h"
 #include "nautilus-scheme.h"
@@ -80,12 +79,20 @@ nautilus_launch_application_for_mount (GAppInfo  *app_info,
                                        GMount    *mount,
                                        GtkWindow *parent_window)
 {
-    g_autoptr (GFile) root = g_mount_get_root (mount);
-    g_autoptr (NautilusFile) file = nautilus_file_get (root);
+    GFile *root;
+    NautilusFile *file;
+    GList *files;
 
+    root = g_mount_get_root (mount);
+    file = nautilus_file_get (root);
+    g_object_unref (root);
+
+    files = g_list_append (NULL, file);
     nautilus_launch_application (app_info,
-                                 &(NautilusFileList){ .data = file },
+                                 files,
                                  parent_window);
+
+    g_list_free_full (files, (GDestroyNotify) nautilus_file_unref);
 }
 
 /**
@@ -99,9 +106,9 @@ nautilus_launch_application_for_mount (GAppInfo  *app_info,
  * @parent_window: A window to use as the parent for any error dialogs.
  */
 void
-nautilus_launch_application (GAppInfo         *application,
-                             NautilusFileList *files,
-                             GtkWindow        *parent_window)
+nautilus_launch_application (GAppInfo  *application,
+                             GList     *files,
+                             GtkWindow *parent_window)
 {
     GList *uris, *l;
 
