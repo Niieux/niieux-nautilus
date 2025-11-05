@@ -104,6 +104,11 @@
               <attribute name="action">view.open-item-new-window</attribute>
               <attribute name="hidden-when">action-disabled</attribute>
             </item>
+            <item>
+              <attribute name="label" translatable="yes">Open in Split _View</attribute>
+              <attribute name="action">view.open-in-split-view</attribute>
+              <attribute name="hidden-when">action-disabled</attribute>
+            </item>
           </section>
           <section>
             <item>

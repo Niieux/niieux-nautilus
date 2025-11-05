@@ -85,6 +85,7 @@
 #include "nautilus-view.h"
 #include "nautilus-view-model.h"
 #include "nautilus-tracker-utilities.h"
+#include "nautilus-window.h"
 
 /* Minimum starting update inverval */
 #define UPDATE_INTERVAL_MIN 100
@@ -1504,6 +1505,47 @@ action_open_item_new_tab (GSimpleAction *action,
                                         NAUTILUS_OPEN_FLAG_NEW_TAB |
                                         NAUTILUS_OPEN_FLAG_DONT_MAKE_ACTIVE,
                                         TRUE);
+}
+
+static void
+action_open_in_split_view (GSimpleAction *action,
+                           GVariant      *state,
+                           gpointer       user_data)
+{
+    NautilusFilesView *view = NAUTILUS_FILES_VIEW (user_data);
+    NautilusFilesViewPrivate *priv = nautilus_files_view_get_instance_private (view);
+    g_autolist (NautilusFile) selection = NULL;
+    NautilusFile *file;
+    GFile *location;
+    NautilusWindow *window;
+
+    selection = nautilus_view_get_selection (NAUTILUS_VIEW (view));
+    
+    if (selection == NULL || selection->next != NULL)
+    {
+        /* Only works with single file/folder selection */
+        return;
+    }
+
+    file = NAUTILUS_FILE (selection->data);
+    
+    /* Get location - if it's a file, use its parent directory */
+    if (nautilus_file_is_directory (file))
+    {
+        location = nautilus_file_get_location (file);
+    }
+    else
+    {
+        location = nautilus_file_get_parent_location (file);
+    }
+
+    window = NAUTILUS_WINDOW (gtk_widget_get_root (GTK_WIDGET (priv->slot)));
+    
+    if (location != NULL)
+    {
+        nautilus_window_open_location_in_split_view (window, location);
+        g_object_unref (location);
+    }
 }
 
 static void
@@ -7195,6 +7237,7 @@ const GActionEntry view_entries[] =
     { .name = "open-current-directory-with-files", .activate = action_open_current_directory_with_files },
     { .name = "open-item-new-window", .activate = action_open_item_new_window },
     { .name = "open-item-new-tab", .activate = action_open_item_new_tab },
+    { .name = "open-in-split-view", .activate = action_open_in_split_view },
     { .name = "cut", .activate = action_cut},
     { .name = "copy", .activate = action_copy},
     { .name = "create-link-in-place", .activate = action_create_links_in_place },

@@ -57,6 +57,7 @@
 #include "nautilus-scheme.h"
 #include "nautilus-shortcut-manager.h"
 #include "nautilus-signaller.h"
+#include "nautilus-split-view.h"
 #include "nautilus-toolbar.h"
 #include "nautilus-trash-monitor.h"
 #include "nautilus-ui-utilities.h"
@@ -90,7 +91,8 @@ struct _NautilusWindow
     GList *slots;
     NautilusWindowSlot *active_slot; /* weak reference */
 
-    GtkWidget *split_view;
+    GtkWidget *split_view_container;
+    NautilusSplitView *split_view;
 
     /* Side Pane */
     GtkWidget *places_sidebar;     /* the actual GtkPlacesSidebar */
@@ -646,8 +648,8 @@ action_toggle_sidebar (GSimpleAction *action,
     NautilusWindow *window = NAUTILUS_WINDOW (user_data);
     gboolean revealed;
 
-    revealed = adw_overlay_split_view_get_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view));
-    adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view), !revealed);
+    revealed = adw_overlay_split_view_get_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view_container));
+    adw_overlay_split_view_set_show_sidebar (ADW_OVERLAY_SPLIT_VIEW (window->split_view_container), !revealed);
 }
 
 static void
@@ -1148,7 +1150,7 @@ nautilus_window_initialize_actions (NautilusWindow *window)
 #undef ACCELS
 
     action = g_action_map_lookup_action (G_ACTION_MAP (window), "toggle-sidebar");
-    g_object_bind_property (window->split_view, "collapsed",
+    g_object_bind_property (window->split_view_container, "collapsed",
                             action, "enabled", G_BINDING_SYNC_CREATE);
 }
 
@@ -1564,7 +1566,23 @@ nautilus_window_init (NautilusWindow *window)
     g_type_ensure (NAUTILUS_TYPE_GTK_PLACES_SIDEBAR);
     g_type_ensure (NAUTILUS_TYPE_PROGRESS_INDICATOR);
     g_type_ensure (NAUTILUS_TYPE_SHORTCUT_MANAGER);
+    g_type_ensure (NAUTILUS_TYPE_SPLIT_VIEW);
     gtk_widget_init_template (GTK_WIDGET (window));
+
+    /* Create and add the split view programmatically */
+    window->split_view = NAUTILUS_SPLIT_VIEW (nautilus_split_view_new ());
+    gtk_widget_set_visible (GTK_WIDGET (window->split_view), FALSE);
+    
+    /* Get the content box and insert split view before tab_view */
+    GtkWidget *content_box = gtk_widget_get_first_child (
+        GTK_WIDGET (adw_overlay_split_view_get_content (ADW_OVERLAY_SPLIT_VIEW (window->split_view_container)))
+    );
+    
+    if (GTK_IS_BOX (content_box))
+    {
+        /* Insert split view as first child */
+        gtk_box_prepend (GTK_BOX (content_box), GTK_WIDGET (window->split_view));
+    }
 
     g_signal_connect (window, "notify::maximized",
                       G_CALLBACK (on_is_maximized_changed), NULL);
@@ -1684,7 +1702,7 @@ nautilus_window_class_init (NautilusWindowClass *class)
                                                  "/org/gnome/nautilus/ui/nautilus-window.ui");
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, undo_redo_section);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, toolbar);
-    gtk_widget_class_bind_template_child (wclass, NautilusWindow, split_view);
+    gtk_widget_class_bind_template_child (wclass, NautilusWindow, split_view_container);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, places_sidebar);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, toast_overlay);
     gtk_widget_class_bind_template_child (wclass, NautilusWindow, tab_view);
@@ -1783,5 +1801,66 @@ nautilus_window_search (NautilusWindow *window,
     else
     {
         g_warning ("Trying search on a slot but no active slot present");
+    }
+}
+
+void
+nautilus_window_open_location_in_split_view (NautilusWindow *window,
+                                             GFile          *location)
+{
+    NautilusWindowSlot *active_slot;
+    NautilusWindowSlot *left_slot;
+    NautilusWindowSlot *right_slot;
+    GFile *current_location;
+    
+    g_return_if_fail (NAUTILUS_IS_WINDOW (window));
+    g_return_if_fail (G_IS_FILE (location));
+
+    if (window->split_view == NULL)
+    {
+        g_warning ("Split view is NULL");
+        return;
+    }
+
+    /* If split view is not active, set it up */
+    if (!nautilus_split_view_is_active (window->split_view))
+    {
+        /* Get the current active slot */
+        active_slot = nautilus_window_get_active_slot (window);
+        
+        /* Create left slot with current location */
+        left_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+        connect_slot (window, left_slot);
+        
+        if (active_slot != NULL)
+        {
+            current_location = nautilus_window_slot_get_location (active_slot);
+            if (current_location != NULL)
+            {
+                nautilus_window_slot_open_location_full (left_slot, current_location, 0, NULL);
+            }
+        }
+        
+        /* Create right slot with new location */
+        right_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+        connect_slot (window, right_slot);
+        
+        /* Set up the split view */
+        nautilus_split_view_set_left_slot (window->split_view, left_slot);
+        nautilus_split_view_set_right_slot (window->split_view, right_slot);
+        
+        /* Make split view visible */
+        gtk_widget_set_visible (GTK_WIDGET (window->split_view), TRUE);
+        
+        /* Enable split view with the location */
+        nautilus_split_view_enable (window->split_view, location);
+        
+        g_message ("Split view enabled with location");
+    }
+    else
+    {
+        /* Already active, just update the right pane */
+        nautilus_split_view_enable (window->split_view, location);
+        g_message ("Split view location updated");
     }
 }

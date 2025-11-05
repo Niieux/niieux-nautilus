@@ -251,6 +251,8 @@ libnautilus_sources = [
   'nautilus-shortcut-manager.h',
   'nautilus-signaller.h',
   'nautilus-signaller.c',
+  'nautilus-split-view.c',
+  'nautilus-split-view.h',
   'nautilus-query.c',
   'nautilus-thumbnails.c',
   'nautilus-thumbnails.h',

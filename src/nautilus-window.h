@@ -87,6 +87,9 @@ void nautilus_window_show_operation_notification (NautilusWindow *window,
 void nautilus_window_search (NautilusWindow *window,
                              NautilusQuery  *query);
 
+void nautilus_window_open_location_in_split_view (NautilusWindow *window,
+                                                  GFile          *location);
+
 void nautilus_window_initialize_slot (NautilusWindow     *window,
                                       NautilusWindowSlot *slot,
                                       NautilusOpenFlags   flags);

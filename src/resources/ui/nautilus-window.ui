@@ -98,7 +98,7 @@
         <property name="child">
           <object class="AdwToastOverlay" id="toast_overlay">
             <property name="child">
-              <object class="AdwOverlaySplitView" id="split_view">
+              <object class="AdwOverlaySplitView" id="split_view_container">
                 <property name="enable-show-gesture">False</property>
                 <property name="enable-hide-gesture">False</property>
                 <property name="max-sidebar-width">240</property>
@@ -156,7 +156,7 @@
                       <object class="NautilusToolbar" id="toolbar">
                         <property name="show-view-controls">true</property>
                         <property name="show-history-controls">true</property>
-                        <property name="sidebar-button-active" bind-source="split_view" bind-property="show-sidebar" bind-flags="bidirectional|sync-create"/>
+                        <property name="sidebar-button-active" bind-source="split_view_container" bind-property="show-sidebar" bind-flags="bidirectional|sync-create"/>
                         <property name="window-slot" bind-source="NautilusWindow" bind-property="active-slot" bind-flags="sync-create"/>
                       </object>
                     </child>
@@ -166,8 +166,14 @@
                       </object>
                     </child>
                     <property name="content">
-                      <object class="AdwTabView" id="tab_view">
-                        <property name="menu-model">tab_menu_model</property>
+                      <object class="GtkBox" id="content_box">
+                        <property name="orientation">vertical</property>
+                        <child>
+                          <object class="AdwTabView" id="tab_view">
+                            <property name="menu-model">tab_menu_model</property>
+                            <property name="vexpand">true</property>
+                          </object>
+                        </child>
                       </object>
                     </property>
                     <child type="bottom">
@@ -201,9 +207,9 @@
     <child>
       <object class="AdwBreakpoint">
         <condition>max-width: 682sp</condition>
-        <setter object="split_view" property="collapsed">True</setter>
-        <setter object="split_view" property="enable-show-gesture">True</setter>
-        <setter object="split_view" property="enable-hide-gesture">True</setter>
+        <setter object="split_view_container" property="collapsed">True</setter>
+        <setter object="split_view_container" property="enable-show-gesture">True</setter>
+        <setter object="split_view_container" property="enable-hide-gesture">True</setter>
         <setter object="toolbar" property="show-sidebar-button">True</setter>
         <setter object="toolbar" property="show-view-controls">False</setter>
         <setter object="toolbar" property="show-history-controls">False</setter>
