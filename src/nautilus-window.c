@@ -69,6 +69,8 @@ static void nautilus_window_back_or_forward (NautilusWindow *window,
                                              guint           distance);
 static void nautilus_window_sync_location_widgets (NautilusWindow *window);
 static void update_cursor (NautilusWindow *window);
+static void disconnect_slot (NautilusWindow     *window,
+                             NautilusWindowSlot *slot);
 
 /* Sanity check: highest mouse button value I could find was 14. 5 is our
  * lower threshold (well-documented to be the one of the button events for the
@@ -282,6 +284,49 @@ static void
 on_location_changed (NautilusWindow *window)
 {
     nautilus_window_sync_location_widgets (window);
+}
+
+static void
+on_split_view_disabled (NautilusSplitView *split_view,
+                       NautilusWindow    *window)
+{
+    NautilusWindowSlot *left_slot;
+    NautilusWindowSlot *right_slot;
+
+    /* Get the slots before cleaning up */
+    left_slot = nautilus_split_view_get_left_slot (split_view);
+    right_slot = nautilus_split_view_get_right_slot (split_view);
+
+    /* Remove and clean up the right slot */
+    if (right_slot != NULL)
+    {
+        /* Unparent the slot widget from the split view */
+        gtk_widget_unparent (GTK_WIDGET (right_slot));
+        
+        /* Disconnect and remove the slot */
+        disconnect_slot (window, right_slot);
+        window->slots = g_list_remove (window->slots, right_slot);
+    }
+
+    /* Remove and clean up the left slot */
+    if (left_slot != NULL)
+    {
+        /* Unparent the slot widget from the split view */
+        gtk_widget_unparent (GTK_WIDGET (left_slot));
+        
+        /* Disconnect and remove the slot */
+        disconnect_slot (window, left_slot);
+        window->slots = g_list_remove (window->slots, left_slot);
+    }
+
+    /* Hide the entire split view widget */
+    gtk_widget_set_visible (GTK_WIDGET (window->split_view), FALSE);
+
+    /* Make sure we switch back to the normal tab view active slot */
+    if (window->active_slot != NULL)
+    {
+        nautilus_window_set_active_slot (window, window->active_slot);
+    }
 }
 
 static void
@@ -1573,6 +1618,10 @@ nautilus_window_init (NautilusWindow *window)
     window->split_view = NAUTILUS_SPLIT_VIEW (nautilus_split_view_new ());
     gtk_widget_set_visible (GTK_WIDGET (window->split_view), FALSE);
     
+    /* Connect to split view signals */
+    g_signal_connect (window->split_view, "split-disabled",
+                     G_CALLBACK (on_split_view_disabled), window);
+    
     /* Get the content box and insert split view before tab_view */
     GtkWidget *content_box = gtk_widget_get_first_child (
         GTK_WIDGET (adw_overlay_split_view_get_content (ADW_OVERLAY_SPLIT_VIEW (window->split_view_container)))
@@ -1825,29 +1874,39 @@ nautilus_window_open_location_in_split_view (NautilusWindow *window,
     /* If split view is not active, set it up */
     if (!nautilus_split_view_is_active (window->split_view))
     {
+        NautilusNavigationState *nav_state = NULL;
+        
         /* Get the current active slot */
         active_slot = nautilus_window_get_active_slot (window);
         
-        /* Create left slot with current location */
+        /* Create left slot with current location and history */
         left_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
         connect_slot (window, left_slot);
         
+        /* Create right slot with new location */
+        right_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
+        connect_slot (window, right_slot);
+        
+        /* Set up the split view slots FIRST before opening locations */
+        nautilus_split_view_set_left_slot (window->split_view, left_slot);
+        nautilus_split_view_set_right_slot (window->split_view, right_slot);
+        
         if (active_slot != NULL)
         {
+            /* Copy navigation state (history) from active slot */
+            nav_state = nautilus_window_slot_get_navigation_state (active_slot);
+            if (nav_state != NULL)
+            {
+                nautilus_window_slot_restore_navigation_state (left_slot, nav_state);
+                g_free (nav_state);
+            }
+            
             current_location = nautilus_window_slot_get_location (active_slot);
             if (current_location != NULL)
             {
                 nautilus_window_slot_open_location_full (left_slot, current_location, 0, NULL);
             }
         }
-        
-        /* Create right slot with new location */
-        right_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
-        connect_slot (window, right_slot);
-        
-        /* Set up the split view */
-        nautilus_split_view_set_left_slot (window->split_view, left_slot);
-        nautilus_split_view_set_right_slot (window->split_view, right_slot);
         
         /* Make split view visible */
         gtk_widget_set_visible (GTK_WIDGET (window->split_view), TRUE);

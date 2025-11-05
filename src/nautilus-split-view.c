@@ -10,6 +10,8 @@
 
 #include "nautilus-split-view.h"
 #include "nautilus-window-slot.h"
+#include "nautilus-history-controls.h"
+#include "nautilus-pathbar.h"
 
 struct _NautilusSplitView
 {
@@ -19,6 +21,12 @@ struct _NautilusSplitView
     GtkWidget *paned;
     GtkWidget *left_pane_box;
     GtkWidget *right_pane_box;
+    GtkWidget *left_header_box;
+    GtkWidget *right_header_box;
+    GtkWidget *left_history_controls;
+    GtkWidget *right_history_controls;
+    GtkWidget *left_pathbar;
+    GtkWidget *right_pathbar;
     GtkWidget *right_close_button;
 
     /* Window slots */
@@ -69,6 +77,40 @@ on_close_button_clicked (GtkButton         *button,
                          NautilusSplitView *split_view)
 {
     nautilus_split_view_close_pane (split_view);
+}
+
+static void
+on_left_slot_location_changed (NautilusSplitView *split_view)
+{
+    GFile *location;
+    
+    if (split_view->left_slot == NULL)
+    {
+        return;
+    }
+    
+    location = nautilus_window_slot_get_location (split_view->left_slot);
+    if (location != NULL)
+    {
+        nautilus_path_bar_set_path (NAUTILUS_PATH_BAR (split_view->left_pathbar), location);
+    }
+}
+
+static void
+on_right_slot_location_changed (NautilusSplitView *split_view)
+{
+    GFile *location;
+    
+    if (split_view->right_slot == NULL)
+    {
+        return;
+    }
+    
+    location = nautilus_window_slot_get_location (split_view->right_slot);
+    if (location != NULL)
+    {
+        nautilus_path_bar_set_path (NAUTILUS_PATH_BAR (split_view->right_pathbar), location);
+    }
 }
 
 static void
@@ -213,7 +255,6 @@ nautilus_split_view_class_init (NautilusSplitViewClass *klass)
 static void
 nautilus_split_view_init (NautilusSplitView *split_view)
 {
-    GtkWidget *header_box;
     GtkWidget *close_icon;
 
     gtk_orientable_set_orientation (GTK_ORIENTABLE (split_view),
@@ -231,25 +272,44 @@ nautilus_split_view_init (NautilusSplitView *split_view)
     gtk_widget_set_vexpand (split_view->left_pane_box, TRUE);
     gtk_style_context_add_class (gtk_widget_get_style_context (split_view->left_pane_box),
                                 "split-pane");
+
+    /* Add header with history controls and pathbar for left pane */
+    split_view->left_header_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class (split_view->left_header_box, "split-pane-header");
+    gtk_box_append (GTK_BOX (split_view->left_pane_box), split_view->left_header_box);
+
+    /* Create history controls for left pane */
+    split_view->left_history_controls = g_object_new (NAUTILUS_TYPE_HISTORY_CONTROLS, NULL);
+    gtk_box_append (GTK_BOX (split_view->left_header_box), split_view->left_history_controls);
+
+    /* Create pathbar for left pane */
+    split_view->left_pathbar = g_object_new (NAUTILUS_TYPE_PATH_BAR, NULL);
+    gtk_widget_set_hexpand (split_view->left_pathbar, TRUE);
+    gtk_box_append (GTK_BOX (split_view->left_header_box), split_view->left_pathbar);
+
     gtk_paned_set_start_child (GTK_PANED (split_view->paned),
                               split_view->left_pane_box);
 
-    /* Create right pane with header for close button */
+    /* Create right pane with header for controls and close button */
     split_view->right_pane_box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_hexpand (split_view->right_pane_box, TRUE);
     gtk_widget_set_vexpand (split_view->right_pane_box, TRUE);
     gtk_style_context_add_class (gtk_widget_get_style_context (split_view->right_pane_box),
                                 "split-pane");
 
-    /* Add close button header to right pane */
-    header_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_widget_add_css_class (header_box, "split-pane-header");
-    gtk_box_append (GTK_BOX (split_view->right_pane_box), header_box);
+    /* Add header with history controls, pathbar and close button to right pane */
+    split_view->right_header_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_add_css_class (split_view->right_header_box, "split-pane-header");
+    gtk_box_append (GTK_BOX (split_view->right_pane_box), split_view->right_header_box);
 
-    /* Spacer to push close button to the right */
-    GtkWidget *spacer = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand (spacer, TRUE);
-    gtk_box_append (GTK_BOX (header_box), spacer);
+    /* Create history controls for right pane */
+    split_view->right_history_controls = g_object_new (NAUTILUS_TYPE_HISTORY_CONTROLS, NULL);
+    gtk_box_append (GTK_BOX (split_view->right_header_box), split_view->right_history_controls);
+
+    /* Create pathbar for right pane */
+    split_view->right_pathbar = g_object_new (NAUTILUS_TYPE_PATH_BAR, NULL);
+    gtk_widget_set_hexpand (split_view->right_pathbar, TRUE);
+    gtk_box_append (GTK_BOX (split_view->right_header_box), split_view->right_pathbar);
 
     /* Close button */
     split_view->right_close_button = gtk_button_new ();
@@ -259,7 +319,7 @@ nautilus_split_view_init (NautilusSplitView *split_view)
     gtk_widget_set_tooltip_text (split_view->right_close_button, "Close split view");
     g_signal_connect (split_view->right_close_button, "clicked",
                      G_CALLBACK (on_close_button_clicked), split_view);
-    gtk_box_append (GTK_BOX (header_box), split_view->right_close_button);
+    gtk_box_append (GTK_BOX (split_view->right_header_box), split_view->right_close_button);
 
     gtk_paned_set_end_child (GTK_PANED (split_view->paned),
                             split_view->right_pane_box);
@@ -283,7 +343,8 @@ nautilus_split_view_init (NautilusSplitView *split_view)
     split_view->right_pane_active = FALSE;
     split_view->saved_pane_position = -1;
 
-    /* Hide right pane by default */
+    /* Hide headers and right pane by default */
+    gtk_widget_set_visible (split_view->left_header_box, FALSE);
     gtk_widget_set_visible (split_view->right_pane_box, FALSE);
 
     nautilus_split_view_update_pane_styles (split_view);
@@ -332,8 +393,20 @@ nautilus_split_view_set_left_slot (NautilusSplitView  *split_view,
     {
         if (slot != NULL)
         {
+            /* Add the slot widget first */
             gtk_box_append (GTK_BOX (split_view->left_pane_box),
                           GTK_WIDGET (slot));
+            
+            /* Bind history controls and pathbar to the slot */
+            g_object_set (split_view->left_history_controls, "window-slot", slot, NULL);
+            g_object_set (split_view->left_pathbar, "window-slot", slot, NULL);
+            
+            /* Connect to location changes to update pathbar */
+            g_signal_connect_swapped (slot, "notify::location",
+                                     G_CALLBACK (on_left_slot_location_changed), split_view);
+            
+            /* Update pathbar with current location if any */
+            on_left_slot_location_changed (split_view);
         }
     }
 }
@@ -349,9 +422,20 @@ nautilus_split_view_set_right_slot (NautilusSplitView  *split_view,
     {
         if (slot != NULL)
         {
-            /* Append after the header (which is the first child) */
+            /* Add the slot widget first (after the header) */
             gtk_box_append (GTK_BOX (split_view->right_pane_box),
                           GTK_WIDGET (slot));
+            
+            /* Bind history controls and pathbar to the slot */
+            g_object_set (split_view->right_history_controls, "window-slot", slot, NULL);
+            g_object_set (split_view->right_pathbar, "window-slot", slot, NULL);
+            
+            /* Connect to location changes to update pathbar */
+            g_signal_connect_swapped (slot, "notify::location",
+                                     G_CALLBACK (on_right_slot_location_changed), split_view);
+            
+            /* Update pathbar with current location if any */
+            on_right_slot_location_changed (split_view);
         }
     }
 }
@@ -414,7 +498,8 @@ nautilus_split_view_enable (NautilusSplitView *split_view,
 
     split_view->is_split_active = TRUE;
 
-    /* Show right pane */
+    /* Show both pane headers and right pane */
+    gtk_widget_set_visible (split_view->left_header_box, TRUE);
     gtk_widget_set_visible (split_view->right_pane_box, TRUE);
     
     /* Set equal pane sizes or restore previous position */
@@ -456,7 +541,8 @@ nautilus_split_view_disable (NautilusSplitView *split_view)
     /* Save current pane position */
     split_view->saved_pane_position = gtk_paned_get_position (GTK_PANED (split_view->paned));
 
-    /* Hide right pane */
+    /* Hide both pane headers and right pane */
+    gtk_widget_set_visible (split_view->left_header_box, FALSE);
     gtk_widget_set_visible (split_view->right_pane_box, FALSE);
     split_view->right_pane_active = FALSE;
     nautilus_split_view_update_pane_styles (split_view);
