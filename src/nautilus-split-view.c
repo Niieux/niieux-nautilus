@@ -12,6 +12,8 @@
 #include "nautilus-window-slot.h"
 #include "nautilus-history-controls.h"
 #include "nautilus-pathbar.h"
+#include "nautilus-application.h"
+#include "nautilus-enums.h"
 
 struct _NautilusSplitView
 {
@@ -110,6 +112,44 @@ on_right_slot_location_changed (NautilusSplitView *split_view)
     if (location != NULL)
     {
         nautilus_path_bar_set_path (NAUTILUS_PATH_BAR (split_view->right_pathbar), location);
+    }
+}
+
+static void
+on_left_pathbar_open_location (NautilusPathBar   *path_bar,
+                                GFile             *location,
+                                NautilusOpenFlags  open_flags,
+                                gpointer           user_data)
+{
+    NautilusSplitView *split_view = NAUTILUS_SPLIT_VIEW (user_data);
+
+    if (open_flags & (NAUTILUS_OPEN_FLAG_NEW_WINDOW | NAUTILUS_OPEN_FLAG_NEW_TAB))
+    {
+        nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
+                                                 location, open_flags, NULL, NULL, NULL, NULL);
+    }
+    else if (split_view->left_slot != NULL)
+    {
+        nautilus_window_slot_open_location_full (split_view->left_slot, location, open_flags, NULL);
+    }
+}
+
+static void
+on_right_pathbar_open_location (NautilusPathBar   *path_bar,
+                                 GFile             *location,
+                                 NautilusOpenFlags  open_flags,
+                                 gpointer           user_data)
+{
+    NautilusSplitView *split_view = NAUTILUS_SPLIT_VIEW (user_data);
+
+    if (open_flags & (NAUTILUS_OPEN_FLAG_NEW_WINDOW | NAUTILUS_OPEN_FLAG_NEW_TAB))
+    {
+        nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
+                                                 location, open_flags, NULL, NULL, NULL, NULL);
+    }
+    else if (split_view->right_slot != NULL)
+    {
+        nautilus_window_slot_open_location_full (split_view->right_slot, location, open_flags, NULL);
     }
 }
 
@@ -286,6 +326,10 @@ nautilus_split_view_init (NautilusSplitView *split_view)
     split_view->left_pathbar = g_object_new (NAUTILUS_TYPE_PATH_BAR, NULL);
     gtk_widget_set_hexpand (split_view->left_pathbar, TRUE);
     gtk_box_append (GTK_BOX (split_view->left_header_box), split_view->left_pathbar);
+    
+    /* Connect pathbar open-location signal */
+    g_signal_connect (split_view->left_pathbar, "open-location",
+                     G_CALLBACK (on_left_pathbar_open_location), split_view);
 
     gtk_paned_set_start_child (GTK_PANED (split_view->paned),
                               split_view->left_pane_box);
@@ -310,6 +354,10 @@ nautilus_split_view_init (NautilusSplitView *split_view)
     split_view->right_pathbar = g_object_new (NAUTILUS_TYPE_PATH_BAR, NULL);
     gtk_widget_set_hexpand (split_view->right_pathbar, TRUE);
     gtk_box_append (GTK_BOX (split_view->right_header_box), split_view->right_pathbar);
+    
+    /* Connect pathbar open-location signal */
+    g_signal_connect (split_view->right_pathbar, "open-location",
+                     G_CALLBACK (on_right_pathbar_open_location), split_view);
 
     /* Close button */
     split_view->right_close_button = gtk_button_new ();
