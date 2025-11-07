@@ -381,6 +381,22 @@ rubberband {
     border-bottom: 1px solid @borders;
     padding: 4px 8px;
     min-height: 32px;
+    opacity: 1.0;
+}
+
+.split-pane-header #NautilusPathBar {
+    opacity: 1.0;
+}
+
+/* Force full opacity for pathbar buttons and their content in split view */
+.split-pane-header #NautilusPathButton label,
+.split-pane-header #NautilusPathButton image {
+    opacity: 1.0;
+}
+
+/* Force full opacity for history control buttons in split view */
+.split-pane-header button {
+    opacity: 1.0;
 }
 
 .split-pane-header button.flat {
