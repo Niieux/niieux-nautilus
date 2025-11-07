@@ -322,10 +322,30 @@ on_split_view_disabled (NautilusSplitView *split_view,
     /* Hide the entire split view widget */
     gtk_widget_set_visible (GTK_WIDGET (window->split_view), FALSE);
 
-    /* Make sure we switch back to the normal tab view active slot */
-    if (window->active_slot != NULL)
+    /* Make sure we switch back to the normal tab view - find a slot that's not in split view */
+    NautilusWindowSlot *tab_slot = NULL;
+    for (GList *l = window->slots; l != NULL; l = l->next)
     {
+        NautilusWindowSlot *slot = NAUTILUS_WINDOW_SLOT (l->data);
+        if (slot != left_slot && slot != right_slot)
+        {
+            tab_slot = slot;
+            break;
+        }
+    }
+    
+    if (tab_slot != NULL)
+    {
+        nautilus_window_set_active_slot (window, tab_slot);
+        g_message ("Restored tab slot %p as active after split view closed", tab_slot);
+    }
+    else if (window->active_slot != NULL && 
+             window->active_slot != left_slot && 
+             window->active_slot != right_slot)
+    {
+        /* Current active slot is valid and not one of the split slots */
         nautilus_window_set_active_slot (window, window->active_slot);
+        g_message ("Kept existing active slot %p after split view closed", window->active_slot);
     }
 }
 
@@ -1887,9 +1907,10 @@ nautilus_window_open_location_in_split_view (NautilusWindow *window,
         right_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
         connect_slot (window, right_slot);
         
-        /* Remove "slot" action group from window BEFORE setting up split view slots */
-        gtk_widget_insert_action_group (GTK_WIDGET (window), "slot", NULL);
-        g_message ("Removed slot action group from window for split view");
+        /* DON'T remove window's slot action group - keep it for tab view below */
+        /* Instead, insert NULL on split view widget to block window's action group */
+        gtk_widget_insert_action_group (GTK_WIDGET (window->split_view), "slot", NULL);
+        g_message ("Blocked window slot action group for split view widget tree");
         
         /* Set up the split view slots FIRST before opening locations */
         nautilus_split_view_set_left_slot (window->split_view, left_slot);
