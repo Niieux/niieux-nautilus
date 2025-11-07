@@ -441,11 +441,27 @@ nautilus_split_view_set_left_slot (NautilusSplitView  *split_view,
     {
         if (slot != NULL)
         {
+            GActionGroup *slot_action_group;
+            
             /* Add the slot widget first */
             gtk_box_append (GTK_BOX (split_view->left_pane_box),
                           GTK_WIDGET (slot));
             
-            /* Bind history controls and pathbar to the slot */
+            /* Get the slot's action group and insert it on the pane box so history controls can find it */
+            slot_action_group = nautilus_window_slot_get_action_group (slot);
+            g_message ("Left slot action group: %p", slot_action_group);
+            if (slot_action_group != NULL)
+            {
+                gtk_widget_insert_action_group (split_view->left_pane_box, "slot", slot_action_group);
+                g_message ("Inserted left slot action group on pane box");
+                
+                /* Recreate history controls so they pick up the new action group */
+                gtk_box_remove (GTK_BOX (split_view->left_header_box), split_view->left_history_controls);
+                split_view->left_history_controls = g_object_new (NAUTILUS_TYPE_HISTORY_CONTROLS, NULL);
+                gtk_box_prepend (GTK_BOX (split_view->left_header_box), split_view->left_history_controls);
+            }
+            
+            /* Bind history controls and pathbar to the slot AFTER action group is set up */
             g_object_set (split_view->left_history_controls, "window-slot", slot, NULL);
             g_object_set (split_view->left_pathbar, "window-slot", slot, NULL);
             
@@ -470,9 +486,25 @@ nautilus_split_view_set_right_slot (NautilusSplitView  *split_view,
     {
         if (slot != NULL)
         {
+            GActionGroup *slot_action_group;
+            
             /* Add the slot widget first (after the header) */
             gtk_box_append (GTK_BOX (split_view->right_pane_box),
                           GTK_WIDGET (slot));
+            
+            /* Get the slot's action group and insert it on the pane box so history controls can find it */
+            slot_action_group = nautilus_window_slot_get_action_group (slot);
+            g_message ("Right slot action group: %p", slot_action_group);
+            if (slot_action_group != NULL)
+            {
+                gtk_widget_insert_action_group (split_view->right_pane_box, "slot", slot_action_group);
+                g_message ("Inserted right slot action group on pane box");
+                
+                /* Recreate history controls so they pick up the new action group */
+                gtk_box_remove (GTK_BOX (split_view->right_header_box), split_view->right_history_controls);
+                split_view->right_history_controls = g_object_new (NAUTILUS_TYPE_HISTORY_CONTROLS, NULL);
+                gtk_box_prepend (GTK_BOX (split_view->right_header_box), split_view->right_history_controls);
+            }
             
             /* Bind history controls and pathbar to the slot */
             g_object_set (split_view->right_history_controls, "window-slot", slot, NULL);

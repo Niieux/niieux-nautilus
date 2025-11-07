@@ -1887,6 +1887,10 @@ nautilus_window_open_location_in_split_view (NautilusWindow *window,
         right_slot = nautilus_window_slot_new (NAUTILUS_MODE_BROWSE);
         connect_slot (window, right_slot);
         
+        /* Remove "slot" action group from window BEFORE setting up split view slots */
+        gtk_widget_insert_action_group (GTK_WIDGET (window), "slot", NULL);
+        g_message ("Removed slot action group from window for split view");
+        
         /* Set up the split view slots FIRST before opening locations */
         nautilus_split_view_set_left_slot (window->split_view, left_slot);
         nautilus_split_view_set_right_slot (window->split_view, right_slot);

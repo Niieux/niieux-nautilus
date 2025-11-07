@@ -121,4 +121,6 @@ void nautilus_window_slot_back_or_forward                  (NautilusWindowSlot *
                                                             gboolean            back,
                                                             guint               distance);
 
+GActionGroup* nautilus_window_slot_get_action_group        (NautilusWindowSlot *slot);
+
 void free_navigation_state                                 (gpointer data);

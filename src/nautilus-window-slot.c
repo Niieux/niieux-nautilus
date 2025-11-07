@@ -933,10 +933,16 @@ update_back_forward_actions (NautilusWindowSlot *self)
     GAction *action;
     gboolean enabled;
 
+    g_message ("update_back_forward_actions called for slot %p", self);
+    g_message ("  back_history: %p, forward_history: %p", 
+               nautilus_window_slot_get_back_history (self),
+               nautilus_window_slot_get_forward_history (self));
+
     enabled = (nautilus_window_slot_get_back_history (self) != NULL &&
                !nautilus_window_slot_get_search_global (self));
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "back");
     g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
+    g_message ("  back action enabled: %d", enabled);
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "back-n");
     g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
 
@@ -944,6 +950,7 @@ update_back_forward_actions (NautilusWindowSlot *self)
                !nautilus_window_slot_get_search_global (self));
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "forward");
     g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
+    g_message ("  forward action enabled: %d", enabled);
     action = g_action_map_lookup_action (G_ACTION_MAP (self->slot_action_group), "forward-n");
     g_simple_action_set_enabled (G_SIMPLE_ACTION (action), enabled);
 }
@@ -3346,4 +3353,12 @@ nautilus_window_slot_go_down (NautilusWindowSlot *self)
     g_object_unref (child);
     down_list = g_list_delete_link (down_list, down_list);
     self->down_list = g_steal_pointer (&down_list);
+}
+
+GActionGroup *
+nautilus_window_slot_get_action_group (NautilusWindowSlot *self)
+{
+    g_return_val_if_fail (NAUTILUS_IS_WINDOW_SLOT (self), NULL);
+    
+    return self->slot_action_group;
 }
