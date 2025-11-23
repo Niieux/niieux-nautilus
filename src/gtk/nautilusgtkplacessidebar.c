@@ -47,6 +47,7 @@
 #include "nautilus-trash-monitor.h"
 #include "nautilus-ui-utilities.h"
 #include "nautilus-window-slot.h"
+#include "nautilus-window.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
@@ -2696,9 +2697,32 @@ format_cb (GSimpleAction *action,
 
 }
 
+static void
+open_split_view_cb (GSimpleAction *action,
+                    GVariant      *parameter,
+                    gpointer       data)
+{
+  NautilusGtkPlacesSidebar *sidebar = data;
+  char *uri;
+  GFile *location;
+  NautilusWindow *window;
+
+  g_object_get (sidebar->context_row, "uri", &uri, NULL);
+
+  if (uri != NULL && sidebar->window_slot)
+    {
+      location = g_file_new_for_uri (uri);
+      window = NAUTILUS_WINDOW (gtk_widget_get_root (GTK_WIDGET (sidebar->window_slot)));
+      nautilus_window_open_location_in_split_view (window, location);
+      g_object_unref (location);
+      g_free (uri);
+    }
+}
+
 static GActionEntry entries[] = {
   { .name = "open", .activate = open_shortcut_cb, .parameter_type = "i"},
   { .name = "open-other", .activate = open_shortcut_cb, .parameter_type = "i"},
+  { .name = "open-split-view", .activate = open_split_view_cb},
   { .name = "remove", .activate = remove_shortcut_cb},
   { .name = "rename", .activate = rename_shortcut_cb},
   { .name = "mount", .activate = mount_shortcut_cb},
@@ -2781,6 +2805,9 @@ build_popup_menu_using_gmenu (NautilusGtkSidebarRow *row)
           g_menu_append_item (menu, item);
           g_object_unref (item);
         }
+      item = g_menu_item_new (_("Open in Split _View"), "row.open-split-view");
+      g_menu_append_item (menu, item);
+      g_object_unref (item);
       cloud_provider_menu = cloud_providers_account_get_menu_model (cloud_provider_account);
       cloud_provider_action_group = cloud_providers_account_get_action_group (cloud_provider_account);
       if (cloud_provider_menu != NULL && cloud_provider_action_group != NULL)
@@ -2900,6 +2927,10 @@ create_row_popover (NautilusGtkPlacesSidebar *sidebar,
       g_menu_append_item (section, item);
       g_object_unref (item);
     }
+
+  item = g_menu_item_new (_("Open in Split _View"), "row.open-split-view");
+  g_menu_append_item (section, item);
+  g_object_unref (item);
 
   g_menu_append_section (menu, NULL, G_MENU_MODEL (section));
   g_object_unref (section);

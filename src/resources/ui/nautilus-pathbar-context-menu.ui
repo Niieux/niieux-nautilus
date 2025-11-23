@@ -11,6 +11,10 @@
       <attribute name="action">pathbar.open-item-new-tab</attribute>
     </item>
     <item>
+      <attribute name="label" translatable="yes">Open in Split _View</attribute>
+      <attribute name="action">pathbar.open-item-split-view</attribute>
+    </item>
+    <item>
       <attribute name="label" translatable="yes">_Properties</attribute>
       <attribute name="action">pathbar.properties</attribute>
     </item>

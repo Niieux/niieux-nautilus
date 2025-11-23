@@ -24,6 +24,7 @@
 
 #include "nautilus-pathbar.h"
 #include "nautilus-properties-window.h"
+#include "nautilus-window.h"
 
 #include "nautilus-dnd.h"
 #include "nautilus-enums.h"
@@ -142,6 +143,9 @@ static void     action_pathbar_open_item_new_window (GSimpleAction *action,
 static void     action_pathbar_open_item_new_tab (GSimpleAction *action,
                                                   GVariant      *state,
                                                   gpointer       user_data);
+static void     action_pathbar_open_item_split_view (GSimpleAction *action,
+                                                     GVariant      *state,
+                                                     gpointer       user_data);
 static void     action_pathbar_properties (GSimpleAction *action,
                                            GVariant      *state,
                                            gpointer       user_data);
@@ -153,6 +157,7 @@ const GActionEntry path_bar_actions[] =
 {
     { .name = "open-item-new-tab", .activate = action_pathbar_open_item_new_tab },
     { .name = "open-item-new-window", .activate = action_pathbar_open_item_new_window },
+    { .name = "open-item-split-view", .activate = action_pathbar_open_item_split_view },
     { .name = "properties", .activate = action_pathbar_properties}
 };
 
@@ -202,6 +207,32 @@ action_pathbar_open_item_new_window (GSimpleAction *action,
     if (location)
     {
         g_signal_emit (user_data, path_bar_signals[OPEN_LOCATION], 0, location, NAUTILUS_OPEN_FLAG_NEW_WINDOW);
+        g_object_unref (location);
+    }
+}
+
+static void
+action_pathbar_open_item_split_view (GSimpleAction *action,
+                                     GVariant      *state,
+                                     gpointer       user_data)
+{
+    NautilusPathBar *self;
+    GFile *location;
+    NautilusWindow *window;
+
+    self = NAUTILUS_PATH_BAR (user_data);
+
+    if (self->context_menu_file == NULL)
+    {
+        return;
+    }
+
+    location = nautilus_file_get_location (self->context_menu_file);
+
+    if (location && self->slot)
+    {
+        window = NAUTILUS_WINDOW (gtk_widget_get_root (GTK_WIDGET (self->slot)));
+        nautilus_window_open_location_in_split_view (window, location);
         g_object_unref (location);
     }
 }
