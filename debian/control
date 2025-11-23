@@ -2,7 +2,6 @@ Source: nautilus
 Section: gnome
 Priority: optional
 Maintainer: Niieux OS <support@niieux.com>
-Uploaders: Amin Bandali <bandali@ubuntu.com>, Jeremy Bícha <jbicha@ubuntu.com>, Kavish Advani <kavish@niieux.com>
 Build-Depends: debhelper-compat (= 13),
                dh-sequence-gir,
                dh-sequence-gnome,
