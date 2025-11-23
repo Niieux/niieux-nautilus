@@ -1842,9 +1842,11 @@ nautilus_window_show_about_dialog (NautilusWindow *window)
 
     dialog = adw_about_dialog_new_from_appdata ("/org/gnome/nautilus/appdata", NULL);
 
+    adw_about_dialog_set_application_name (ADW_ABOUT_DIALOG (dialog), "Nautilus for Niieux");
+    adw_about_dialog_set_comments (ADW_ABOUT_DIALOG (dialog), "This is a modified version of GNOME Files (Nautilus) for Niieux.\nNot an official GNOME product.");
     adw_about_dialog_set_version (ADW_ABOUT_DIALOG (dialog), VERSION);
     adw_about_dialog_set_debug_info (ADW_ABOUT_DIALOG (dialog), debug_info);
-    adw_about_dialog_set_copyright (ADW_ABOUT_DIALOG (dialog), "© 1999 The Files Authors");
+    adw_about_dialog_set_copyright (ADW_ABOUT_DIALOG (dialog), "© 1999 The Files Authors\n© 2025 Niieux (modifications)");
     adw_about_dialog_set_developers (ADW_ABOUT_DIALOG (dialog), developers);
     adw_about_dialog_set_designers (ADW_ABOUT_DIALOG (dialog), designers);
     adw_about_dialog_set_documenters (ADW_ABOUT_DIALOG (dialog), documenters);
