@@ -1,3 +1,11 @@
+nautilus (48.3-2+niieux) unstable; urgency=medium
+
+  * NOTE: This is not the official version of GNOME Files (Nautilus)
+    but a modification for Niieux
+  * Custom Niieux build
+
+ -- Kavish Advani <kavish@niieux.com>  Sun, 24 Nov 2025 21:52:52 +0000
+
 nautilus (48.3-2) unstable; urgency=medium
 
   * Team upload
