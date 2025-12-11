@@ -7,6 +7,7 @@
 #include "nautilus-progress-indicator.h"
 
 #include "nautilus-file-operations.h"
+#include "nautilus-progress-info.h"
 #include "nautilus-progress-info-manager.h"
 #include "nautilus-progress-info-widget.h"
 #include "nautilus-progress-paintable.h"
@@ -211,7 +212,7 @@ on_progress_info_finished (NautilusProgressIndicator *self,
 
     folder_to_open = nautilus_progress_info_get_destination (info);
     /* If destination is null, don't show a notification. This happens when the
-     * operation is a trash operation, which we already show a diferent kind of
+     * operation is a trash operation, which we already show a different kind of
      * notification */
     if (!gtk_widget_is_visible (self->operations_popover) &&
         folder_to_open != NULL)

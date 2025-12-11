@@ -19,8 +19,10 @@
 
 #pragma once
 
+#include "nautilus-types.h"
+
+#include <gio/gio.h>
 #include <glib-object.h>
-#include "nautilus-query.h"
 
 G_BEGIN_DECLS
 
@@ -42,7 +44,7 @@ void                nautilus_search_hit_set_fts_snippet       (NautilusSearchHit
                                                                const gchar       *snippet);
 void                nautilus_search_hit_compute_scores        (NautilusSearchHit *hit,
                                                                GDateTime         *now,
-							       NautilusQuery     *query);
+                                                               GFile             *query_location);
 
 const char *        nautilus_search_hit_get_uri               (NautilusSearchHit *hit);
 gdouble             nautilus_search_hit_get_relevance         (NautilusSearchHit *hit);

@@ -32,11 +32,12 @@
 #include "nautilus-file.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-global-preferences.h"
+#include "nautilus-query.h"
 #include "nautilus-scheme.h"
 #include "nautilus-search-directory.h"
 #include "nautilus-search-popover.h"
 #include "nautilus-mime-actions.h"
-#include "nautilus-tracker-utilities.h"
+#include "nautilus-localsearch-utilities.h"
 #include "nautilus-ui-utilities.h"
 
 struct _NautilusQueryEditor
@@ -44,7 +45,6 @@ struct _NautilusQueryEditor
     GtkWidget parent_instance;
 
     GtkWidget *prefix_icon;
-    GtkWidget *tags_box;
     GtkWidget *text;
     GtkWidget *clear_icon;
     GtkWidget *popover;
@@ -52,9 +52,6 @@ struct _NautilusQueryEditor
     GtkWidget *search_info_button;
     GtkWidget *status_page;
     GtkWidget *search_settings_button;
-
-    GtkWidget *mime_types_tag;
-    GtkWidget *date_range_tag;
 
     GCancellable *cancellable;
 
@@ -90,20 +87,23 @@ static void nautilus_query_editor_changed (NautilusQueryEditor *editor);
 G_DEFINE_TYPE (NautilusQueryEditor, nautilus_query_editor, GTK_TYPE_WIDGET);
 
 static void
+update_filter_button (NautilusQueryEditor *self)
+{
+    if (nautilus_query_has_active_filter (self->query))
+    {
+        gtk_widget_add_css_class (self->dropdown_button, "accent");
+    }
+    else
+    {
+        gtk_widget_remove_css_class (self->dropdown_button, "accent");
+    }
+}
+
+static void
 update_fts_sensitivity (NautilusQueryEditor *editor)
 {
-    gboolean fts_sensitive = TRUE;
-
-    if (editor->location)
-    {
-        g_autoptr (NautilusFile) file = nautilus_file_get (editor->location);
-
-        fts_sensitive = !g_file_has_uri_scheme (editor->location, SCHEME_NETWORK) &&
-                        !(nautilus_file_is_remote (file) &&
-                          location_settings_search_get_recursive_for_location (editor->location) == NAUTILUS_QUERY_RECURSIVE_NEVER);
-        nautilus_search_popover_set_fts_sensitive (NAUTILUS_SEARCH_POPOVER (editor->popover),
-                                                   fts_sensitive);
-    }
+    nautilus_search_popover_set_fts_available (NAUTILUS_SEARCH_POPOVER (editor->popover),
+                                               nautilus_query_can_search_content (editor->query));
 }
 
 static void
@@ -139,8 +139,7 @@ find_enclosing_mount_cb (GObject      *source_object,
         g_autoptr (NautilusFile) file = nautilus_file_get (editor->location);
 
         /* Subfolders are disabled */
-        if (location_settings_search_get_recursive_for_location (editor->location)
-            == NAUTILUS_QUERY_RECURSIVE_NEVER)
+        if (!nautilus_query_recursive (editor->query))
         {
             adw_status_page_set_description (ADW_STATUS_PAGE (editor->status_page),
                                              _("Search may be slow and will not include "
@@ -167,14 +166,14 @@ find_enclosing_mount_cb (GObject      *source_object,
                                        _("External Drive"));
             gtk_widget_set_visible (editor->search_info_button, TRUE);
         }
-        else if (!nautilus_tracker_directory_is_tracked (editor->location))
+        else if (!nautilus_localsearch_directory_is_tracked (editor->location))
         {
             adw_status_page_set_title (ADW_STATUS_PAGE (editor->status_page),
                                        _("Folder Not in Search Locations"));
             gtk_widget_set_visible (editor->search_info_button, TRUE);
             gtk_widget_set_visible (editor->search_settings_button, TRUE);
         }
-        else if (nautilus_tracker_directory_is_single (editor->location))
+        else if (nautilus_localsearch_directory_is_single (editor->location))
         {
             adw_status_page_set_title (ADW_STATUS_PAGE (editor->status_page),
                                        _("Subfolders Not in Search Locations"));
@@ -183,8 +182,7 @@ find_enclosing_mount_cb (GObject      *source_object,
 
 
             /* Subfolders are disabled */
-            if (location_settings_search_get_recursive_for_location (editor->location)
-                == NAUTILUS_QUERY_RECURSIVE_NEVER)
+            if (!nautilus_query_recursive (editor->query))
             {
                 adw_status_page_set_description (ADW_STATUS_PAGE (editor->status_page),
                                                  _("Some subfolders will not be included "
@@ -223,22 +221,18 @@ recursive_search_preferences_changed (GSettings           *settings,
                                       gchar               *key,
                                       NautilusQueryEditor *editor)
 {
-    NautilusQueryRecursive recursive;
-
     if (!editor->query)
     {
         return;
     }
 
-    recursive = location_settings_search_get_recursive ();
-    if (recursive != nautilus_query_get_recursive (editor->query))
+    if (nautilus_query_update_recursive_setting (editor->query))
     {
-        nautilus_query_set_recursive (editor->query, recursive);
+        update_filter_button (editor);
         nautilus_query_editor_changed (editor);
+        update_fts_sensitivity (editor);
+        update_search_information (editor);
     }
-
-    update_fts_sensitivity (editor);
-    update_search_information (editor);
 }
 
 
@@ -252,7 +246,6 @@ nautilus_query_editor_dispose (GObject *object)
     g_clear_handle_id (&editor->search_changed_idle_id, g_source_remove);
 
     gtk_widget_unparent (gtk_widget_get_first_child (GTK_WIDGET (editor)));
-    g_clear_pointer (&editor->tags_box, gtk_widget_unparent);
     g_clear_pointer (&editor->text, gtk_widget_unparent);
     g_clear_pointer (&editor->dropdown_button, gtk_widget_unparent);
     g_clear_pointer (&editor->search_info_button, gtk_widget_unparent);
@@ -451,36 +444,22 @@ nautilus_query_editor_class_init (NautilusQueryEditorClass *class)
 static void
 create_query (NautilusQueryEditor *editor)
 {
-    NautilusQuery *query;
-    gboolean fts_enabled;
-
     g_return_if_fail (editor->query == NULL);
 
-    fts_enabled = nautilus_search_popover_get_fts_enabled (NAUTILUS_SEARCH_POPOVER (editor->popover));
-
-    query = nautilus_query_new ();
-
-    nautilus_query_set_search_content (query, fts_enabled);
-
+    g_autoptr (NautilusQuery) query = nautilus_query_new ();
     nautilus_query_set_text (query, gtk_editable_get_text (GTK_EDITABLE (editor->text)));
     nautilus_query_set_location (query, editor->location);
-
-    /* We only set the query using the global setting for recursivity here,
-     * it's up to the search engine to check weather it can proceed with
-     * deep search in the current directory or not. */
-    nautilus_query_set_recursive (query, location_settings_search_get_recursive ());
 
     nautilus_query_editor_set_query (editor, query);
 }
 
 static void
-entry_activate_cb (GtkWidget           *entry,
-                   NautilusQueryEditor *editor)
+entry_activate_cb (NautilusQueryEditor *editor)
 {
     g_signal_emit (editor, signals[ACTIVATED], 0);
 }
 
-static gboolean
+static void
 entry_changed_internal (NautilusQueryEditor *editor)
 {
     const gchar *text = gtk_editable_get_text (GTK_EDITABLE (editor->text));
@@ -493,17 +472,17 @@ entry_changed_internal (NautilusQueryEditor *editor)
     }
     else
     {
-        nautilus_query_set_text (editor->query, text);
+        if (!nautilus_query_set_text (editor->query, text))
+        {
+            return;
+        }
     }
 
     nautilus_query_editor_changed (editor);
-
-    return G_SOURCE_REMOVE;
 }
 
 static void
-entry_changed_cb (GtkWidget           *entry,
-                  NautilusQueryEditor *editor)
+entry_changed_cb (NautilusQueryEditor *editor)
 {
     const gchar *text = gtk_editable_get_text (GTK_EDITABLE (editor->text));
 
@@ -517,98 +496,35 @@ entry_changed_cb (GtkWidget           *entry,
         return;
     }
 
-    editor->search_changed_idle_id = g_idle_add (G_SOURCE_FUNC (entry_changed_internal),
-                                                 editor);
-}
-
-static GtkWidget *
-create_tag (NautilusQueryEditor *self,
-            const gchar         *text,
-            GCallback            reset_callback)
-{
-    GtkWidget *tag;
-    GtkWidget *label;
-    GtkWidget *button;
-
-    tag = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_widget_set_margin_end (tag, 6);
-    gtk_widget_set_name (tag, "NautilusQueryEditorTag");
-
-    label = gtk_label_new (text);
-    gtk_widget_add_css_class (label, "caption-heading");
-    gtk_widget_set_margin_start (label, 12);
-    gtk_box_append (GTK_BOX (tag), label);
-
-    button = gtk_button_new ();
-    gtk_button_set_icon_name (GTK_BUTTON (button), "window-close-symbolic");
-    gtk_widget_add_css_class (button, "flat");
-    gtk_widget_add_css_class (button, "circular");
-    gtk_widget_set_tooltip_text (button, _("Remove Filter"));
-    g_signal_connect_object (button, "clicked",
-                             reset_callback, self->popover, G_CONNECT_SWAPPED);
-    gtk_box_append (GTK_BOX (tag), button);
-
-    return tag;
+    editor->search_changed_idle_id = g_idle_add_once ((GSourceOnceFunc) entry_changed_internal,
+                                                      editor);
 }
 
 static void
-search_popover_date_range_changed_cb (NautilusSearchPopover *popover,
-                                      GPtrArray             *date_range,
-                                      gpointer               user_data)
+search_popover_date_range_changed_cb (NautilusQueryEditor *editor,
+                                      GPtrArray           *date_range)
 {
-    NautilusQueryEditor *editor;
-
-    editor = NAUTILUS_QUERY_EDITOR (user_data);
-
     if (editor->query == NULL)
     {
         create_query (editor);
-    }
-
-    if (editor->date_range_tag != NULL)
-    {
-        gtk_box_remove (GTK_BOX (editor->tags_box), editor->date_range_tag);
-        editor->date_range_tag = NULL;
-    }
-
-    if (date_range)
-    {
-        g_autofree gchar *text_for_date_range = NULL;
-
-        text_for_date_range = get_text_for_date_range (date_range, TRUE);
-        editor->date_range_tag = create_tag (editor,
-                                             text_for_date_range,
-                                             G_CALLBACK (nautilus_search_popover_reset_date_range));
-        gtk_box_append (GTK_BOX (editor->tags_box), editor->date_range_tag);
     }
 
     nautilus_query_set_date_range (editor->query, date_range);
 
+    update_filter_button (editor);
     nautilus_query_editor_changed (editor);
-    gtk_widget_set_visible (editor->tags_box,
-                            (gtk_widget_get_first_child (editor->tags_box) != NULL));
 }
 
 static void
-search_popover_mime_type_changed_cb (NautilusSearchPopover *popover,
-                                     gint                   mimetype_group,
-                                     const gchar           *mimetype,
-                                     gpointer               user_data)
+search_popover_mime_type_changed_cb (NautilusQueryEditor *editor,
+                                     gint                 mimetype_group,
+                                     const gchar         *mimetype)
 {
-    NautilusQueryEditor *editor;
     g_autoptr (GPtrArray) mimetypes = NULL;
-
-    editor = NAUTILUS_QUERY_EDITOR (user_data);
 
     if (editor->query == NULL)
     {
         create_query (editor);
-    }
-
-    if (editor->mime_types_tag != NULL)
-    {
-        gtk_box_remove (GTK_BOX (editor->tags_box), editor->mime_types_tag);
-        editor->mime_types_tag = NULL;
     }
 
     /* group 0 is anything */
@@ -619,40 +535,22 @@ search_popover_mime_type_changed_cb (NautilusSearchPopover *popover,
     else if (mimetype_group > 0)
     {
         mimetypes = nautilus_mime_types_group_get_mimetypes (mimetype_group);
-        editor->mime_types_tag = create_tag (editor,
-                                             nautilus_mime_types_group_get_name (mimetype_group),
-                                             G_CALLBACK (nautilus_search_popover_reset_mime_types));
-        gtk_box_append (GTK_BOX (editor->tags_box), editor->mime_types_tag);
     }
     else
     {
-        g_autofree gchar *display_name = NULL;
-
         mimetypes = g_ptr_array_new_full (1, g_free);
         g_ptr_array_add (mimetypes, g_strdup (mimetype));
-
-        display_name = g_content_type_get_description (mimetype);
-        editor->mime_types_tag = create_tag (editor,
-                                             display_name,
-                                             G_CALLBACK (nautilus_search_popover_reset_mime_types));
-        gtk_box_append (GTK_BOX (editor->tags_box), editor->mime_types_tag);
     }
     nautilus_query_set_mime_types (editor->query, mimetypes);
 
+    update_filter_button (editor);
     nautilus_query_editor_changed (editor);
-    gtk_widget_set_visible (editor->tags_box,
-                            (gtk_widget_get_first_child (editor->tags_box) != NULL));
 }
 
 static void
-search_popover_time_type_changed_cb (NautilusSearchPopover   *popover,
-                                     NautilusQuerySearchType  data,
-                                     gpointer                 user_data)
+search_popover_time_type_changed_cb (NautilusQueryEditor    *editor,
+                                     NautilusSearchTimeType  data)
 {
-    NautilusQueryEditor *editor;
-
-    editor = NAUTILUS_QUERY_EDITOR (user_data);
-
     if (editor->query == NULL)
     {
         create_query (editor);
@@ -660,27 +558,24 @@ search_popover_time_type_changed_cb (NautilusSearchPopover   *popover,
 
     nautilus_query_set_search_type (editor->query, data);
 
+    update_filter_button (editor);
     nautilus_query_editor_changed (editor);
 }
 
 static void
-search_popover_fts_changed_cb (GObject    *popover,
-                               GParamSpec *pspec,
-                               gpointer    user_data)
+search_popover_fts_changed_cb (NautilusQueryEditor *editor,
+                               gboolean             fts_enabled)
 {
-    NautilusQueryEditor *editor;
-
-    editor = NAUTILUS_QUERY_EDITOR (user_data);
-
     if (editor->query == NULL)
     {
         create_query (editor);
     }
 
-    nautilus_query_set_search_content (editor->query,
-                                       nautilus_search_popover_get_fts_enabled (NAUTILUS_SEARCH_POPOVER (popover)));
-
-    nautilus_query_editor_changed (editor);
+    if (nautilus_query_update_search_content (editor->query))
+    {
+        update_filter_button (editor);
+        nautilus_query_editor_changed (editor);
+    }
 }
 
 static void
@@ -726,10 +621,6 @@ nautilus_query_editor_init (NautilusQueryEditor *editor)
     gtk_widget_set_margin_end (editor->prefix_icon, 6);
     gtk_widget_set_parent (editor->prefix_icon, GTK_WIDGET (editor));
 
-    editor->tags_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_visible (editor->tags_box, FALSE);
-    gtk_widget_set_parent (editor->tags_box, GTK_WIDGET (editor));
-
     editor->text = gtk_text_new ();
     gtk_widget_set_hexpand (editor->text, TRUE);
     gtk_widget_set_parent (editor->text, GTK_WIDGET (editor));
@@ -753,10 +644,6 @@ nautilus_query_editor_init (NautilusQueryEditor *editor)
                       G_CALLBACK (gtk_widget_grab_focus), NULL);
     g_signal_connect_swapped (editor->popover, "closed",
                               G_CALLBACK (gtk_widget_grab_focus), editor);
-
-    g_object_bind_property (editor, "query",
-                            editor->popover, "query",
-                            G_BINDING_DEFAULT);
 
     GtkWidget *search_info_popover = gtk_popover_new ();
     editor->status_page = adw_status_page_new ();
@@ -787,18 +674,18 @@ nautilus_query_editor_init (NautilusQueryEditor *editor)
     gtk_widget_set_visible (editor->search_info_button, FALSE);
     gtk_widget_set_parent (editor->search_info_button, GTK_WIDGET (editor));
 
-    g_signal_connect (editor->text, "activate",
-                      G_CALLBACK (entry_activate_cb), editor);
-    g_signal_connect (editor->text, "changed",
-                      G_CALLBACK (entry_changed_cb), editor);
-    g_signal_connect (editor->popover, "date-range",
-                      G_CALLBACK (search_popover_date_range_changed_cb), editor);
-    g_signal_connect (editor->popover, "mime-type",
-                      G_CALLBACK (search_popover_mime_type_changed_cb), editor);
-    g_signal_connect (editor->popover, "time-type",
-                      G_CALLBACK (search_popover_time_type_changed_cb), editor);
-    g_signal_connect (editor->popover, "notify::fts-enabled",
-                      G_CALLBACK (search_popover_fts_changed_cb), editor);
+    g_signal_connect_swapped (editor->text, "activate",
+                              G_CALLBACK (entry_activate_cb), editor);
+    g_signal_connect_swapped (editor->text, "changed",
+                              G_CALLBACK (entry_changed_cb), editor);
+    g_signal_connect_swapped (editor->popover, "date-range",
+                              G_CALLBACK (search_popover_date_range_changed_cb), editor);
+    g_signal_connect_swapped (editor->popover, "mime-type",
+                              G_CALLBACK (search_popover_mime_type_changed_cb), editor);
+    g_signal_connect_swapped (editor->popover, "time-type",
+                              G_CALLBACK (search_popover_time_type_changed_cb), editor);
+    g_signal_connect_swapped (editor->popover, "fts-changed",
+                              G_CALLBACK (search_popover_fts_changed_cb), editor);
 }
 
 static void
@@ -837,7 +724,7 @@ nautilus_query_editor_set_location (NautilusQueryEditor *editor,
         NautilusSearchDirectory *search = NAUTILUS_SEARCH_DIRECTORY (directory);
         g_autoptr (GFile) real_location = NULL;
 
-        real_location = nautilus_query_get_location (nautilus_search_directory_get_query (search));
+        real_location = nautilus_search_directory_get_search_location (search);
 
         should_notify = g_set_object (&editor->location, real_location);
     }
@@ -870,6 +757,7 @@ nautilus_query_editor_set_location (NautilusQueryEditor *editor,
     }
 }
 
+/* Note: This function does not forward mime types to the popover. */
 void
 nautilus_query_editor_set_query (NautilusQueryEditor *self,
                                  NautilusQuery       *query)
@@ -901,6 +789,18 @@ nautilus_query_editor_set_query (NautilusQueryEditor *self,
 
     if (g_set_object (&self->query, query))
     {
+        if (query == NULL)
+        {
+            nautilus_search_popover_reset_mime_types (NAUTILUS_SEARCH_POPOVER (self->popover));
+            nautilus_search_popover_reset_date_range (NAUTILUS_SEARCH_POPOVER (self->popover));
+        }
+        else
+        {
+            nautilus_search_popover_set_date_range (NAUTILUS_SEARCH_POPOVER (self->popover),
+                                                    nautilus_query_get_date_range (self->query));
+        }
+        update_fts_sensitivity (self);
+
         g_object_notify (G_OBJECT (self), "query");
     }
 

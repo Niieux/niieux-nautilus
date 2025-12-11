@@ -82,21 +82,13 @@
 
 /* Search bar */
 
-#NautilusQueryEditor > * {
+#NautilusQueryEditor > menubutton > button {
   margin-top: 5px;
   margin-bottom: 5px;
-}
-
-#NautilusQueryEditorTag > button,
-#NautilusQueryEditor > menubutton > button {
+  margin-left: 0px;
+  margin-right: 0px;
   min-width: 24px;
   min-height: 24px;
-  margin: 0px;
-}
-
-#NautilusQueryEditorTag {
-  background-color: color-mix(in srgb, currentColor 10%, transparent);
-  border-radius: 100px;
 }
 
 /* Mimic the style of GtkEntry icons, but keep button background if pressed. */
@@ -133,6 +125,15 @@
 .batch-rename-preview {
   border-top: solid var(--border-color) 1px;
 }
+
+.batch-rename-preview listview > row {
+  padding: 0;
+}
+
+.batch-rename-preview listview > row > * {
+  padding: 6px;
+}
+
 .conflict-row {
     background: var(--warning-bg-color);
     color: var(--warning-fg-color);
@@ -284,7 +285,7 @@ placesview list {
   background-color: color-mix(in srgb, currentColor 10%, transparent);
 }
 
-.view .cut {
+.view .hidden-file {
   opacity: 0.55;
 }
 
@@ -357,73 +358,4 @@ rubberband {
 
 .toolbar.no-bottom-padding {
   padding-bottom: 0px;
-}
-
-/* Split View Styling */
-
-/* CSS styling for split view mode */
-
-.split-pane {
-    border: 1px solid @borders;
-    background-color: @theme_base_color;
-    transition: all 200ms ease-in-out;
-}
-
-.split-pane.active-pane {
-    border: 2px solid @accent_bg_color;
-    box-shadow: inset 0 0 0 1px alpha(@accent_bg_color, 0.15);
-}
-
-
-
-.split-pane-header {
-    background-color: @headerbar_bg_color;
-    border-bottom: 1px solid @borders;
-    padding: 4px 8px;
-    min-height: 32px;
-    opacity: 1.0;
-}
-
-.split-pane-header #NautilusPathBar {
-    opacity: 1.0;
-}
-
-/* Force full opacity for pathbar buttons and their content in split view */
-.split-pane-header #NautilusPathButton label,
-.split-pane-header #NautilusPathButton image {
-    opacity: 1.0;
-}
-
-/* Force full opacity for history control buttons in split view */
-.split-pane-header button {
-    opacity: 1.0;
-}
-
-.split-pane-header button.flat {
-    min-width: 24px;
-    min-height: 24px;
-    padding: 2px;
-    margin: 0;
-}
-
-/* Separator styling */
-paned > separator {
-    min-width: 6px;
-    background-color: @borders;
-    background-image: repeating-linear-gradient(
-        90deg,
-        transparent,
-        transparent 2px,
-        alpha(@theme_fg_color, 0.08) 2px,
-        alpha(@theme_fg_color, 0.08) 3px
-    );
-    transition: background-color 150ms ease-in-out;
-}
-
-paned > separator:hover {
-    background-color: @accent_bg_color;
-}
-
-paned > separator:active {
-    background-color: @accent_color;
 }

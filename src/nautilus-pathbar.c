@@ -24,18 +24,19 @@
 
 #include "nautilus-pathbar.h"
 #include "nautilus-properties-window.h"
-#include "nautilus-window.h"
 
 #include "nautilus-dnd.h"
 #include "nautilus-enums.h"
 #include "nautilus-enum-types.h"
 #include "nautilus-file.h"
+#include "nautilus-files-view.h"
 #include "nautilus-file-utilities.h"
 #include "nautilus-global-preferences.h"
 #include "nautilus-icon-names.h"
 #include "nautilus-scheme.h"
 #include "nautilus-trash-monitor.h"
 #include "nautilus-ui-utilities.h"
+#include "nautilus-window-slot.h"
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
@@ -143,9 +144,6 @@ static void     action_pathbar_open_item_new_window (GSimpleAction *action,
 static void     action_pathbar_open_item_new_tab (GSimpleAction *action,
                                                   GVariant      *state,
                                                   gpointer       user_data);
-static void     action_pathbar_open_item_split_view (GSimpleAction *action,
-                                                     GVariant      *state,
-                                                     gpointer       user_data);
 static void     action_pathbar_properties (GSimpleAction *action,
                                            GVariant      *state,
                                            gpointer       user_data);
@@ -157,7 +155,6 @@ const GActionEntry path_bar_actions[] =
 {
     { .name = "open-item-new-tab", .activate = action_pathbar_open_item_new_tab },
     { .name = "open-item-new-window", .activate = action_pathbar_open_item_new_window },
-    { .name = "open-item-split-view", .activate = action_pathbar_open_item_split_view },
     { .name = "properties", .activate = action_pathbar_properties}
 };
 
@@ -207,32 +204,6 @@ action_pathbar_open_item_new_window (GSimpleAction *action,
     if (location)
     {
         g_signal_emit (user_data, path_bar_signals[OPEN_LOCATION], 0, location, NAUTILUS_OPEN_FLAG_NEW_WINDOW);
-        g_object_unref (location);
-    }
-}
-
-static void
-action_pathbar_open_item_split_view (GSimpleAction *action,
-                                     GVariant      *state,
-                                     gpointer       user_data)
-{
-    NautilusPathBar *self;
-    GFile *location;
-    NautilusWindow *window;
-
-    self = NAUTILUS_PATH_BAR (user_data);
-
-    if (self->context_menu_file == NULL)
-    {
-        return;
-    }
-
-    location = nautilus_file_get_location (self->context_menu_file);
-
-    if (location && self->slot)
-    {
-        window = NAUTILUS_WINDOW (gtk_widget_get_root (GTK_WIDGET (self->slot)));
-        nautilus_window_open_location_in_split_view (window, location);
         g_object_unref (location);
     }
 }
@@ -392,6 +363,7 @@ nautilus_path_bar_finalize (GObject *object)
 
     self = NAUTILUS_PATH_BAR (object);
 
+    g_clear_object (&self->current_path);
     g_clear_object (&self->current_view_menu);
     g_clear_object (&self->extensions_section);
     g_clear_object (&self->templates_submenu);
@@ -761,7 +733,7 @@ on_click_gesture_pressed (GtkGestureClick *gesture,
             else
             {
                 /* GtkButton will claim the primary button presses and emit the
-                 * "clicked" signal. Handle it in the singal callback, not here.
+                 * "clicked" signal. Handle it in the signal callback, not here.
                  */
                 return;
             }
@@ -797,7 +769,7 @@ switch_location (ButtonData *button_data)
     g_return_if_fail (self->slot != NULL);
 
     nautilus_window_slot_open_location_full (self->slot,
-                                             location, NAUTILUS_OPEN_FLAG_DONT_MAKE_ACTIVE,
+                                             location,
                                              NULL);
 }
 
@@ -912,7 +884,7 @@ on_drag_drop (GtkDropTarget *target,
     }
 
     target_location = nautilus_file_get_location (button_data->file);
-    target_view = NAUTILUS_FILES_VIEW (nautilus_window_slot_get_current_view (self->slot));
+    target_view = nautilus_window_slot_get_current_view (self->slot);
     action = gdk_drop_get_actions (gtk_drop_target_get_current_drop (target));
 
     #ifdef GDK_WINDOWING_X11

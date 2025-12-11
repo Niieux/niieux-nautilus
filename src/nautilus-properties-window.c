@@ -652,8 +652,6 @@ nautilus_properties_window_drag_drop_cb (GtkDropTarget *target,
                                          gdouble        y,
                                          gpointer       user_data)
 {
-    GSList *file_list;
-    gboolean exactly_one;
     GtkImage *image;
     GtkWindow *window;
 
@@ -665,8 +663,14 @@ nautilus_properties_window_drag_drop_cb (GtkDropTarget *target,
         return;
     }
 
-    file_list = g_value_get_boxed (value);
-    exactly_one = file_list != NULL && g_slist_next (file_list) == NULL;
+    GSList *file_list = g_value_get_boxed (value);
+
+    if (file_list == NULL)
+    {
+        return;
+    }
+
+    gboolean exactly_one = file_list != NULL && g_slist_next (file_list) == NULL;
 
     if (!exactly_one)
     {
@@ -713,13 +717,20 @@ star_clicked (NautilusPropertiesWindow *self)
     if (nautilus_tag_manager_file_is_starred (tag_manager, uri))
     {
         nautilus_tag_manager_unstar_files (tag_manager, G_OBJECT (self),
-                                           &(GList){ .data = file }, NULL, NULL);
+                                           &(GList){ .data = file },
+                                           (GAsyncReadyCallback) nautilus_tag_manager_announce_unstarred_cb,
+                                           self,
+                                           NULL);
         gtk_widget_remove_css_class (self->star_button, "starred");
     }
     else
     {
-        nautilus_tag_manager_star_files (tag_manager, G_OBJECT (self),
-                                         &(GList){ .data = file }, NULL, NULL);
+        nautilus_tag_manager_star_files (
+            tag_manager, G_OBJECT (self),
+            &(GList){ .data = file },
+            (GAsyncReadyCallback) nautilus_tag_manager_announce_starred_cb,
+            self,
+            NULL);
         gtk_widget_add_css_class (self->star_button, "starred");
     }
     gtk_widget_add_css_class (self->star_button, "interacted");
@@ -737,8 +748,7 @@ update_star (NautilusPropertiesWindow *self,
 
     gtk_button_set_icon_name (GTK_BUTTON (self->star_button),
                               is_starred ? "starred-symbolic" : "non-starred-symbolic");
-    /* Translators: This is a verb for tagging or untagging a file with a star. */
-    gtk_widget_set_tooltip_text (self->star_button, is_starred ? _("Unstar") : _("Star"));
+    gtk_widget_set_tooltip_text (self->star_button, is_starred ? _("Unstar") : C_("Verb", "Star"));
 }
 
 static void
@@ -1416,14 +1426,15 @@ hash_string_list (GList *list)
 static gsize
 get_first_word_length (const gchar *str)
 {
-    const gchar *space_pos = g_strstr_len (str, -1, " ");
+    const size_t length = strlen (str);
+    const char *space_pos = memchr (str, ' ', length);
     if (space_pos != NULL)
     {
         /* Calculate length through pointer arithmetic. */
         return (gsize) (space_pos - str);
     }
 
-    return strlen (str);
+    return length;
 }
 
 static void
@@ -1943,7 +1954,7 @@ setup_ownership_row (NautilusPropertiesWindow *self,
 {
     adw_combo_row_set_model (row, G_LIST_MODEL (gtk_string_list_new (NULL)));
 
-    /* Intial setup of list model is handled via update function, called via properties_window_update. */
+    /* Initial setup of list model is handled via update function, called via properties_window_update. */
 }
 
 static gboolean
@@ -2487,7 +2498,7 @@ open_parent_folder (NautilusPropertiesWindow *self)
     nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
                                              parent_location,
                                              NAUTILUS_OPEN_FLAG_NEW_WINDOW,
-                                             &(GList){ .data = file },
+                                             &(NautilusFileList){ .data = file },
                                              NULL, NULL, NULL);
 }
 
@@ -2509,7 +2520,7 @@ open_link_target (NautilusPropertiesWindow *self)
     nautilus_application_open_location_full (NAUTILUS_APPLICATION (g_application_get_default ()),
                                              parent_location,
                                              NAUTILUS_OPEN_FLAG_NEW_WINDOW,
-                                             &(GList){ .data = link_target_file },
+                                             &(NautilusFileList){ .data = link_target_file },
                                              NULL, NULL, NULL);
 }
 
@@ -2535,10 +2546,10 @@ setup_open_in_disks (NautilusPropertiesWindow *self)
 
         location = nautilus_file_get_location (get_file (self));
         path = g_file_get_path (location);
-        mount_entry = (path != NULL) ? g_unix_mount_at (path, NULL) : NULL;
+        mount_entry = (path != NULL) ? g_unix_mount_entry_at (path, NULL) : NULL;
         if (mount_entry != NULL)
         {
-            self->device_identifier = g_strdup (g_unix_mount_get_device_path (mount_entry));
+            self->device_identifier = g_strdup (g_unix_mount_entry_get_device_path (mount_entry));
         }
     }
 
@@ -2760,7 +2771,7 @@ static gboolean
 files_has_changable_permissions_directory (NautilusPropertiesWindow *self)
 {
     GList *l;
-    gboolean changable = FALSE;
+    gboolean changeable = FALSE;
 
     for (l = self->files; l != NULL; l = l->next)
     {
@@ -2770,16 +2781,16 @@ files_has_changable_permissions_directory (NautilusPropertiesWindow *self)
             nautilus_file_can_get_permissions (file) &&
             nautilus_file_can_set_permissions (file))
         {
-            changable = TRUE;
+            changeable = TRUE;
         }
         else
         {
-            changable = FALSE;
+            changeable = FALSE;
             break;
         }
     }
 
-    return changable;
+    return changeable;
 }
 
 static void

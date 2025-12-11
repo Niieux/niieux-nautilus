@@ -147,12 +147,17 @@ nautilus_get_home_directory_uri (void)
 gboolean
 nautilus_should_use_templates_directory (void)
 {
-    const char *dir;
-    gboolean res;
+    const char *templates_dir = g_get_user_special_dir (G_USER_DIRECTORY_TEMPLATES);
 
-    dir = g_get_user_special_dir (G_USER_DIRECTORY_TEMPLATES);
-    res = dir && (g_strcmp0 (dir, g_get_home_dir ()) != 0);
-    return res;
+    if (templates_dir == NULL || *templates_dir == '\0')
+    {
+        return FALSE;
+    }
+
+    g_autoptr (GFile) templates_location = g_file_new_for_path (templates_dir);
+
+    return !nautilus_is_home_directory (templates_location) &&
+           !nautilus_is_root_directory (templates_location);
 }
 
 char *
@@ -458,21 +463,18 @@ nautilus_file_list_from_uri_list (GList *uris)
     return g_list_reverse (result);
 }
 
-static GList *
-locations_from_file_list (GList *file_list)
+GList *
+nautilus_location_list_from_file_list (GList *files)
 {
-    NautilusFile *file;
-    GList *l, *ret;
+    GList *locations = NULL;
 
-    ret = NULL;
-
-    for (l = file_list; l != NULL; l = l->next)
+    for (GList *l = files; l != NULL; l = l->next)
     {
-        file = NAUTILUS_FILE (l->data);
-        ret = g_list_prepend (ret, nautilus_file_get_location (file));
+        NautilusFile *file = l->data;
+        locations = g_list_prepend (locations, nautilus_file_get_location (file));
     }
 
-    return g_list_reverse (ret);
+    return g_list_reverse (locations);
 }
 
 typedef struct
@@ -498,7 +500,7 @@ ensure_dirs_task_ready_cb (GObject      *_source,
         original_dir_location = nautilus_file_get_location (original_dir);
 
         files = g_hash_table_lookup (data->original_dirs_hash, original_dir);
-        locations = locations_from_file_list (files);
+        locations = nautilus_location_list_from_file_list (files);
 
         nautilus_file_operations_move_async (locations,
                                              original_dir_location,
@@ -1030,55 +1032,6 @@ nautilus_file_can_rename_files (GList *files)
     }
 
     return TRUE;
-}
-
-NautilusQueryRecursive
-location_settings_search_get_recursive (void)
-{
-    switch (g_settings_get_enum (nautilus_preferences, "recursive-search"))
-    {
-        case NAUTILUS_SPEED_TRADEOFF_ALWAYS:
-        {
-            return NAUTILUS_QUERY_RECURSIVE_ALWAYS;
-        }
-        break;
-
-        case NAUTILUS_SPEED_TRADEOFF_LOCAL_ONLY:
-        {
-            return NAUTILUS_QUERY_RECURSIVE_LOCAL_ONLY;
-        }
-        break;
-
-        case NAUTILUS_SPEED_TRADEOFF_NEVER:
-        {
-            return NAUTILUS_QUERY_RECURSIVE_NEVER;
-        }
-        break;
-    }
-
-    return NAUTILUS_QUERY_RECURSIVE_ALWAYS;
-}
-
-NautilusQueryRecursive
-location_settings_search_get_recursive_for_location (GFile *location)
-{
-    NautilusQueryRecursive recursive = location_settings_search_get_recursive ();
-
-    g_return_val_if_fail (location, recursive);
-
-    if (recursive == NAUTILUS_QUERY_RECURSIVE_LOCAL_ONLY)
-    {
-        g_autoptr (NautilusFile) file = nautilus_file_get_existing (location);
-
-        g_return_val_if_fail (file != NULL, recursive);
-
-        if (nautilus_file_is_remote (file))
-        {
-            recursive = NAUTILUS_QUERY_RECURSIVE_NEVER;
-        }
-    }
-
-    return recursive;
 }
 
 /* check_schema_available() was copied from GNOME Settings */

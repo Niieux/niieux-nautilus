@@ -1,5 +1,5 @@
 {
-  "app-id": "org.gnome.NautilusDevel",
+  "app-id": "org.gnome.Nautilus.Devel",
   "runtime": "org.gnome.Platform",
   "runtime-version": "master",
   "sdk": "org.gnome.Sdk",
@@ -86,7 +86,7 @@
       "config-opts": [
         "-Dfunctional_tests=false",
         "-Dsandbox_tests=false",
-        "-Ddomain_prefix=org.gnome.NautilusDevel",
+        "-Ddomain_prefix=org.gnome.Nautilus.Devel",
         "-Dextract=true",
         "-Dlandlock=disabled",
         "-Dman=false",
@@ -95,6 +95,11 @@
         "-Dsystemd_user_services=false",
         "-Dwriteback=false",
         "-Dbattery_detection=none"
+      ],
+      "post-install": [
+        "echo 'Removing quotations from DBus service files'",
+        "ls -alh /app/share/dbus-1/services/org.*",
+        "sed -i 's/\"//g' /app/share/dbus-1/services/org.*"
       ],
       "sources": [
         {

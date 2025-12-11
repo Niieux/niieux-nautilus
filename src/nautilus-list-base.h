@@ -6,11 +6,11 @@
 
 #pragma once
 
-#include <adwaita.h>
+#include "nautilus-types.h"
 
 #include "nautilus-view-info.h"
-#include "nautilus-view-item.h"
-#include "nautilus-view-model.h"
+
+#include <adwaita.h>
 
 G_BEGIN_DECLS
 
@@ -74,6 +74,4 @@ void    nautilus_list_base_set_zoom_level          (NautilusListBase  *self,
 void    nautilus_list_base_setup_directory         (NautilusListBase  *self,
                                                     NautilusDirectory *directory);
 
-void nautilus_list_base_setup_background_longpress (NautilusListBase *self,
-                                                    GtkWidget * child);
 G_END_DECLS

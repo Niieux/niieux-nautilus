@@ -25,7 +25,7 @@
 GList* batch_rename_dialog_get_new_names_list          (NautilusBatchRenameDialogMode  mode,
                                                         GList                         *selection,
                                                         GList                         *tags_list,
-                                                        GList                         *selection_metadata,
+                                                        GHashTable                    *selection_metadata,
                                                         gchar                         *entry_text,
                                                         gchar                         *replace_text);
 
@@ -57,10 +57,12 @@ gboolean file_name_conflicts_with_results       (GList        *selection,
                                                  GString      *old_name,
                                                  gchar        *parent_uri);
 
-GString* batch_rename_replace_label_text        (const char        *label,
-                                                 const gchar       *substr);
+GString* markup_hightlight_text                 (const char  *label,
+                                                 const gchar *substring,
+                                                 const gchar *text_color,
+                                                 const gchar *background_color);
 
-gchar*   batch_rename_get_tag_text_representation (TagConstants tag_constants);
+const gchar* batch_rename_get_tag_text_representation (TagConstants tag_constants);
 
 void batch_rename_sort_lists_for_rename (GList    **selection,
                                          GList    **new_names,

@@ -1,147 +1,71 @@
 #include "test-utilities.h"
+
+#include <src/nautilus-file-operations.h>
+#include <src/nautilus-file-undo-manager.h>
+#include <src/nautilus-file-utilities.h>
 #include <src/nautilus-tag-manager.h>
 
 static void
 test_copy_one_file (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    g_autoptr (GFile) file = g_file_new_build_filename (test_get_tmp_dir (),
+                                                        "copy_first_dir",
+                                                        "copy_first_dir_child",
+                                                        NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
+    g_autoptr (GFile) result_file = g_file_new_build_filename (test_get_tmp_dir (),
+                                                               "copy_second_dir",
+                                                               "copy_first_dir_child",
+                                                               NULL);
 
     create_one_file ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    files = g_list_prepend (files, g_object_ref (file));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = file },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir_child");
     g_assert_true (g_file_query_exists (result_file, NULL));
     g_assert_true (g_file_query_exists (file, NULL));
 
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_one_file_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_one_file ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    files = g_list_prepend (files, g_object_ref (file));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
-
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir_child");
     g_assert_false (g_file_query_exists (result_file, NULL));
     g_assert_true (g_file_query_exists (file, NULL));
 
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 static void
 test_copy_one_empty_directory (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    g_autoptr (GFile) file = g_file_new_build_filename (test_get_tmp_dir (),
+                                                        "copy_first_dir",
+                                                        "copy_first_dir_child",
+                                                        NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
+    g_autoptr (GFile) result_file = g_file_new_build_filename (test_get_tmp_dir (),
+                                                               "copy_second_dir",
+                                                               "copy_first_dir_child",
+                                                               NULL);
+    g_autolist (GFile) files = g_list_prepend (NULL, g_object_ref (file));
 
     create_one_empty_directory ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    files = g_list_prepend (files, g_object_ref (file));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = file },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir_child");
     g_assert_true (g_file_query_exists (result_file, NULL));
     g_assert_true (g_file_query_exists (file, NULL));
 
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_one_empty_directory_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_one_empty_directory ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    files = g_list_prepend (files, g_object_ref (file));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
-
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir_child");
     g_assert_false (g_file_query_exists (result_file, NULL));
-
     g_assert_true (g_file_query_exists (file, NULL));
 
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 static void
@@ -206,32 +130,11 @@ test_copy_files_small (void)
     copy_multiple_files ("copy_file", root, dir, 10);
 
     verify_multiple_copies_existance ("copy_file", root, dir, 10, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_files_small_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_files ("copy", 10);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_file", root, dir, 10);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_file", root, dir, 10, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
 
     empty_directory_by_prefix (root, "copy");
@@ -254,32 +157,11 @@ test_copy_files_medium (void)
     copy_multiple_files ("copy_file", root, dir, 1000);
 
     verify_multiple_copies_existance ("copy_file", root, dir, 1000, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_files_medium_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_files ("copy", 1000);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_file", root, dir, 1000);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_file", root, dir, 1000, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
 
     empty_directory_by_prefix (root, "copy");
@@ -302,32 +184,11 @@ test_copy_files_large (void)
     copy_multiple_files ("copy_file", root, dir, 10000);
 
     verify_multiple_copies_existance ("copy_file", root, dir, 10000, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_files_large_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_files ("copy", 10000);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_file", root, dir, 10000);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_file", root, dir, 10000, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
 
     empty_directory_by_prefix (root, "copy");
@@ -350,32 +211,11 @@ test_copy_directories_small (void)
     copy_multiple_files ("copy_dir", root, dir, 10);
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 10, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_directories_small_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_directories ("copy", 10);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_destination_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_dir", root, dir, 10);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 10, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
 
     empty_directory_by_prefix (root, "copy");
@@ -398,32 +238,11 @@ test_copy_directories_medium (void)
     copy_multiple_files ("copy_dir", root, dir, 1000);
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 1000, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_directories_medium_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_directories ("copy", 1000);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_destination_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_dir", root, dir, 1000);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 1000, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
 
     empty_directory_by_prefix (root, "copy");
@@ -446,33 +265,14 @@ test_copy_directories_large (void)
     copy_multiple_files ("copy_dir", root, dir, 10000);
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 10000, TRUE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_directories_large_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) dir = NULL;
-
-    create_multiple_directories ("copy", 10000);
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    dir = g_file_get_child (root, "copy_destination_dir");
-    g_assert_true (g_file_query_exists (dir, NULL));
-
-    copy_multiple_files ("copy_dir", root, dir, 10000);
 
     test_operation_undo ();
 
     verify_multiple_copies_existance ("copy_dir", root, dir, 10000, FALSE);
-
     g_assert_true (g_file_query_exists (dir, NULL));
+
+    empty_directory_by_prefix (root, "copy");
 }
 
 /* The hierarchy looks like this:
@@ -483,77 +283,39 @@ test_copy_directories_large_undo (void)
 static void
 test_copy_full_directory (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    const GStrv before_copy_hierarchy = (char *[])
+    {
+        "%s_first_dir/",
+        "%s_first_dir/%s_first_dir_child",
+        NULL
+    };
+    const GStrv after_copy_hierarchy = (char *[])
+    {
+        "%s_second_dir/%s_first_dir/",
+        "%s_second_dir/%s_first_dir/%s_first_dir_child",
+        NULL
+    };
+    g_autoptr (GFile) first_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_first_dir",
+                                                             NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
 
     create_one_file ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = first_dir },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_full_directory_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_one_file ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", TRUE);
 
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_child");
-    g_assert_false (g_file_query_exists (file, NULL));
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", FALSE);
 
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 /* The hierarchy looks like this:
@@ -565,91 +327,41 @@ test_copy_full_directory_undo (void)
 static void
 test_copy_first_hierarchy (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    const GStrv before_copy_hierarchy = (char *[])
+    {
+        "%s_first_dir/",
+        "%s_first_dir/%s_first_child/",
+        "%s_first_dir/%s_second_child/",
+        NULL
+    };
+    const GStrv after_copy_hierarchy = (char *[])
+    {
+        "%s_second_dir/%s_first_dir/",
+        "%s_second_dir/%s_first_dir/%s_first_child/",
+        "%s_second_dir/%s_first_dir/%s_second_child/",
+        NULL
+    };
+    g_autoptr (GFile) first_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_first_dir",
+                                                             NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
 
     create_first_hierarchy ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = first_dir },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (result_file, "copy_second_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_second_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_first_hierarchy_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_first_hierarchy ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", TRUE);
 
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_false (g_file_query_exists (file, NULL));
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", FALSE);
 
-    file = g_file_get_child (result_file, "copy_second_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_second_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 /* The hierarchy looks like this:
@@ -660,89 +372,41 @@ test_copy_first_hierarchy_undo (void)
 static void
 test_copy_second_hierarchy (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    const GStrv before_copy_hierarchy = (char *[])
+    {
+        "%s_first_dir/",
+        "%s_first_dir/%s_first_child/",
+        "%s_first_dir/%s_first_child/%s_second_child/",
+        NULL
+    };
+    const GStrv after_copy_hierarchy = (char *[])
+    {
+        "%s_second_dir/%s_first_dir/",
+        "%s_second_dir/%s_first_dir/%s_first_child/",
+        "%s_second_dir/%s_first_dir/%s_first_child/%s_second_child/",
+        NULL
+    };
+    g_autoptr (GFile) first_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_first_dir",
+                                                             NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
 
     create_second_hierarchy ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = first_dir },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (file, "copy_second_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-    file = g_file_get_child (file, "copy_second_child");
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_second_hierarchy_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_second_hierarchy ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", TRUE);
 
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_false (g_file_query_exists (file, NULL));
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", FALSE);
 
-    file = g_file_get_child (file, "copy_second_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (result_file, "copy_first_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-    file = g_file_get_child (file, "copy_second_child");
-
-    file = g_file_get_child (first_dir, "copy_first_child");
-
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 /* The hierarchy looks like this:
@@ -754,117 +418,47 @@ test_copy_second_hierarchy_undo (void)
 static void
 test_copy_third_hierarchy (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
+    const GStrv before_copy_hierarchy = (char *[])
+    {
+        "%s_first_dir/",
+        "%s_first_dir/%s_first_dir_dir1/",
+        "%s_first_dir/%s_first_dir_dir1/%s_dir1_child/",
+
+        "%s_first_dir/%s_first_dir_dir2/",
+        "%s_first_dir/%s_first_dir_dir2/%s_dir2_child",
+        NULL
+    };
+    const GStrv after_copy_hierarchy = (char *[])
+    {
+        "%s_second_dir/%s_first_dir/",
+        "%s_second_dir/%s_first_dir/%s_first_dir_dir1/",
+        "%s_second_dir/%s_first_dir/%s_first_dir_dir1/%s_dir1_child/",
+
+        "%s_second_dir/%s_first_dir/%s_first_dir_dir2/",
+        "%s_second_dir/%s_first_dir/%s_first_dir_dir2/%s_dir2_child",
+        NULL
+    };
+    g_autoptr (GFile) first_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_first_dir",
+                                                             NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
 
     create_third_hierarchy ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
+    nautilus_file_operations_copy_sync (&(GList){ .data = first_dir },
                                         second_dir);
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
-
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_dir1");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir1_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_dir1");
-
-    file = g_file_get_child (result_file, "copy_first_dir_dir2");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir2_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_dir2");
-
-    file = g_file_get_child (first_dir, "copy_first_dir_dir1");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir1_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (first_dir, "copy_first_dir_dir1");
-
-    file = g_file_get_child (first_dir, "copy_first_dir_dir2");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir2_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (first_dir, "copy_first_dir_dir2");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_third_hierarchy_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_third_hierarchy ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        second_dir);
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", TRUE);
 
     test_operation_undo ();
 
-    result_file = g_file_get_child (second_dir, "copy_first_dir");
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", FALSE);
 
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_dir1");
-    g_assert_false (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir1_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (result_file, "copy_first_dir_dir2");
-    g_assert_false (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir2_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_dir1");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir1_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (first_dir, "copy_first_dir_dir1");
-
-    file = g_file_get_child (first_dir, "copy_first_dir_dir2");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (file, "copy_dir2_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    file = g_file_get_child (first_dir, "copy_first_dir_dir2");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 /* The hierarchy looks like this:
@@ -876,105 +470,52 @@ test_copy_third_hierarchy_undo (void)
 static void
 test_copy_fourth_hierarchy (void)
 {
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) third_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
+    const GStrv before_copy_hierarchy = (char *[])
+    {
+        "%s_first_dir/",
+        "%s_first_dir/%s_first_dir_child/",
+
+        "%s_second_dir/",
+        "%s_second_dir/%s_second_dir_child/",
+        NULL
+    };
+    const GStrv after_copy_hierarchy = (char *[])
+    {
+        "%s_third_dir/%s_first_dir/",
+        "%s_third_dir/%s_first_dir/%s_first_dir_child/",
+
+        "%s_third_dir/%s_second_dir/",
+        "%s_third_dir/%s_second_dir/%s_second_dir_child/",
+
+        NULL
+    };
+    g_autoptr (GFile) first_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_first_dir",
+                                                             NULL);
+    g_autoptr (GFile) second_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                              "copy_second_dir",
+                                                              NULL);
+    g_autoptr (GFile) third_dir = g_file_new_build_filename (test_get_tmp_dir (),
+                                                             "copy_third_dir",
+                                                             NULL);
     g_autolist (GFile) files = NULL;
 
     create_fourth_hierarchy ("copy");
 
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
     files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
     files = g_list_prepend (files, g_object_ref (second_dir));
-    g_assert_true (g_file_query_exists (second_dir, NULL));
 
-    third_dir = g_file_get_child (root, "copy_third_dir");
-    g_assert_true (g_file_query_exists (third_dir, NULL));
+    nautilus_file_operations_copy_sync (files, third_dir);
 
-    nautilus_file_operations_copy_sync (files,
-                                        third_dir);
-
-    result_file = g_file_get_child (third_dir, "copy_first_dir");
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    result_file = g_file_get_child (third_dir, "copy_second_dir");
-    g_assert_true (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_second_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (second_dir, "copy_second_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
-}
-
-static void
-test_copy_fourth_hierarchy_undo (void)
-{
-    g_autoptr (GFile) root = NULL;
-    g_autoptr (GFile) first_dir = NULL;
-    g_autoptr (GFile) second_dir = NULL;
-    g_autoptr (GFile) third_dir = NULL;
-    g_autoptr (GFile) file = NULL;
-    g_autoptr (GFile) result_file = NULL;
-    g_autolist (GFile) files = NULL;
-
-    create_fourth_hierarchy ("copy");
-
-    root = g_file_new_for_path (test_get_tmp_dir ());
-    g_assert_true (g_file_query_exists (root, NULL));
-
-    first_dir = g_file_get_child (root, "copy_first_dir");
-    files = g_list_prepend (files, g_object_ref (first_dir));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    second_dir = g_file_get_child (root, "copy_second_dir");
-    files = g_list_prepend (files, g_object_ref (second_dir));
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    third_dir = g_file_get_child (root, "copy_third_dir");
-    g_assert_true (g_file_query_exists (third_dir, NULL));
-
-    nautilus_file_operations_copy_sync (files,
-                                        third_dir);
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", TRUE);
 
     test_operation_undo ();
 
-    result_file = g_file_get_child (third_dir, "copy_first_dir");
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_first_dir_child");
-    g_assert_false (g_file_query_exists (file, NULL));
+    file_hierarchy_assert_exists (before_copy_hierarchy, "copy", TRUE);
+    file_hierarchy_assert_exists (after_copy_hierarchy, "copy", FALSE);
 
-    result_file = g_file_get_child (third_dir, "copy_second_dir");
-    g_assert_false (g_file_query_exists (result_file, NULL));
-    file = g_file_get_child (result_file, "copy_second_dir_child");
-    g_assert_false (g_file_query_exists (file, NULL));
-
-    file = g_file_get_child (first_dir, "copy_first_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (first_dir, NULL));
-
-    file = g_file_get_child (second_dir, "copy_second_dir_child");
-    g_assert_true (g_file_query_exists (file, NULL));
-    g_assert_true (g_file_query_exists (second_dir, NULL));
-
-    empty_directory_by_prefix (root, "copy");
+    test_clear_tmp_dir ();
 }
 
 static void
@@ -982,56 +523,30 @@ setup_test_suite (void)
 {
     g_test_add_func ("/test-copy-one-file/1.0",
                      test_copy_one_file);
-    g_test_add_func ("/test-copy-one-file-undo/1.0",
-                     test_copy_one_file_undo);
     g_test_add_func ("/test-copy-one-empty-directory/1.0",
                      test_copy_one_empty_directory);
-    g_test_add_func ("/test-copy-one-empty-directory-undo/1.0",
-                     test_copy_one_empty_directory_undo);
     g_test_add_func ("/test-copy-files/1.0",
                      test_copy_files_small);
-    g_test_add_func ("/test-copy-files-undo/1.0",
-                     test_copy_files_small_undo);
     g_test_add_func ("/test-copy-files/1.1",
                      test_copy_files_medium);
-    g_test_add_func ("/test-copy-files-undo/1.1",
-                     test_copy_files_medium_undo);
     g_test_add_func ("/test-copy-files/1.2",
                      test_copy_files_large);
-    g_test_add_func ("/test-copy-files-undo/1.2",
-                     test_copy_files_large_undo);
     g_test_add_func ("/test-copy-directories/1.0",
                      test_copy_directories_small);
-    g_test_add_func ("/test-copy-directories-undo/1.0",
-                     test_copy_directories_small_undo);
     g_test_add_func ("/test-copy-directories/1.1",
                      test_copy_directories_medium);
-    g_test_add_func ("/test-copy-directories-undo/1.1",
-                     test_copy_directories_medium_undo);
     g_test_add_func ("/test-copy-directories/1.2",
                      test_copy_directories_large);
-    g_test_add_func ("/test-copy-directories-undo/1.2",
-                     test_copy_directories_large_undo);
     g_test_add_func ("/test-copy-hierarchy/1.0",
                      test_copy_full_directory);
-    g_test_add_func ("/test-copy-hierarchy-undo/1.0",
-                     test_copy_full_directory_undo);
     g_test_add_func ("/test-copy-hierarchy/1.1",
                      test_copy_first_hierarchy);
-    g_test_add_func ("/test-copy-hierarchy-undo/1.1",
-                     test_copy_first_hierarchy_undo);
     g_test_add_func ("/test-copy-hierarchy/1.2",
                      test_copy_second_hierarchy);
-    g_test_add_func ("/test-copy-hierarchy-undo/1.2",
-                     test_copy_second_hierarchy_undo);
     g_test_add_func ("/test-copy-hierarchy/1.3",
                      test_copy_third_hierarchy);
-    g_test_add_func ("/test-copy-hierarchy-undo/1.3",
-                     test_copy_third_hierarchy_undo);
     g_test_add_func ("/test-copy-hierarchy/1.4",
                      test_copy_fourth_hierarchy);
-    g_test_add_func ("/test-copy-hierarchy-undo/1.4",
-                     test_copy_fourth_hierarchy_undo);
 }
 
 int

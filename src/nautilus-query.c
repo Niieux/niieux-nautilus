@@ -21,15 +21,21 @@
 
 #include "nautilus-query.h"
 
-#include <glib/gi18n.h>
-
+#include "nautilus-date-utilities.h"
 #include "nautilus-enum-types.h"
-#include "nautilus-file-utilities.h"
+#include "nautilus-file.h"
 #include "nautilus-global-preferences.h"
+#include "nautilus-scheme.h"
 
 #define RANK_SCALE_FACTOR 100
 #define MIN_RANK 10.0
 #define MAX_RANK 50.0
+
+static void
+prepared_word_free (GString *string)
+{
+    g_string_free (string, TRUE);
+}
 
 struct _NautilusQuery
 {
@@ -37,36 +43,47 @@ struct _NautilusQuery
 
     char *text;
     GFile *location;
+    /* MIME types - an empty array means "Any type" */
     GPtrArray *mime_types;
     gboolean show_hidden;
     GPtrArray *date_range;
-    NautilusQueryRecursive recursive;
-    NautilusQuerySearchType search_type;
-    NautilusQuerySearchContent search_content;
+    NautilusSpeedTradeoffValue recursion_tradeoff;
+    NautilusSearchTimeType search_type;
+    gboolean search_content;
 
-    gboolean searching;
-    char **prepared_words;
-    GRWLock prepared_words_rwlock;
+    GPtrArray *prepared_words;
 };
-
-static void  nautilus_query_class_init (NautilusQueryClass *class);
-static void  nautilus_query_init (NautilusQuery *query);
 
 G_DEFINE_TYPE (NautilusQuery, nautilus_query, G_TYPE_OBJECT);
 
-enum
+static NautilusSpeedTradeoffValue
+get_recursion_tradeoff (GFile *location)
 {
-    PROP_0,
-    PROP_DATE_RANGE,
-    PROP_LOCATION,
-    PROP_MIMETYPES,
-    PROP_RECURSIVE,
-    PROP_SEARCH_TYPE,
-    PROP_SEARCHING,
-    PROP_SHOW_HIDDEN,
-    PROP_TEXT,
-    LAST_PROP
-};
+    NautilusSpeedTradeoffValue tradeoff = g_settings_get_enum (
+        nautilus_preferences, "recursive-search");
+
+    if (tradeoff != NAUTILUS_SPEED_TRADEOFF_LOCAL_ONLY)
+    {
+        return tradeoff;
+    }
+    else if (location == NULL)
+    {
+        /* Local-only without location -> never */
+        return NAUTILUS_SPEED_TRADEOFF_NEVER;
+    }
+
+    g_autoptr (NautilusFile) file = nautilus_file_get_existing (location);
+    if (file != NULL && !nautilus_file_is_remote (file))
+    {
+        /* It's up to the search engine to check whether it can proceed with
+         * deep search in the current directory or not. */
+        return NAUTILUS_SPEED_TRADEOFF_LOCAL_ONLY;
+    }
+    else
+    {
+        return NAUTILUS_SPEED_TRADEOFF_NEVER;
+    }
+}
 
 static void
 finalize (GObject *object)
@@ -76,143 +93,12 @@ finalize (GObject *object)
     query = NAUTILUS_QUERY (object);
 
     g_free (query->text);
-    g_strfreev (query->prepared_words);
+    g_clear_pointer (&query->prepared_words, g_ptr_array_unref);
     g_clear_object (&query->location);
     g_clear_pointer (&query->mime_types, g_ptr_array_unref);
     g_clear_pointer (&query->date_range, g_ptr_array_unref);
-    g_rw_lock_clear (&query->prepared_words_rwlock);
 
     G_OBJECT_CLASS (nautilus_query_parent_class)->finalize (object);
-}
-
-static void
-nautilus_query_get_property (GObject    *object,
-                             guint       prop_id,
-                             GValue     *value,
-                             GParamSpec *pspec)
-{
-    NautilusQuery *self = NAUTILUS_QUERY (object);
-
-    switch (prop_id)
-    {
-        case PROP_DATE_RANGE:
-        {
-            g_value_set_pointer (value, self->date_range);
-        }
-        break;
-
-        case PROP_LOCATION:
-        {
-            g_value_set_object (value, self->location);
-        }
-        break;
-
-        case PROP_MIMETYPES:
-        {
-            g_value_set_pointer (value, self->mime_types);
-        }
-        break;
-
-        case PROP_RECURSIVE:
-        {
-            g_value_set_enum (value, self->recursive);
-        }
-        break;
-
-        case PROP_SEARCH_TYPE:
-        {
-            g_value_set_enum (value, self->search_type);
-        }
-        break;
-
-        case PROP_SEARCHING:
-        {
-            g_value_set_boolean (value, self->searching);
-        }
-        break;
-
-        case PROP_SHOW_HIDDEN:
-        {
-            g_value_set_boolean (value, self->show_hidden);
-        }
-        break;
-
-        case PROP_TEXT:
-        {
-            g_value_set_string (value, self->text);
-        }
-        break;
-
-        default:
-        {
-            G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-        }
-    }
-}
-
-static void
-nautilus_query_set_property (GObject      *object,
-                             guint         prop_id,
-                             const GValue *value,
-                             GParamSpec   *pspec)
-{
-    NautilusQuery *self = NAUTILUS_QUERY (object);
-
-    switch (prop_id)
-    {
-        case PROP_DATE_RANGE:
-        {
-            nautilus_query_set_date_range (self, g_value_get_pointer (value));
-        }
-        break;
-
-        case PROP_LOCATION:
-        {
-            nautilus_query_set_location (self, g_value_get_object (value));
-        }
-        break;
-
-        case PROP_MIMETYPES:
-        {
-            nautilus_query_set_mime_types (self, g_value_get_pointer (value));
-        }
-        break;
-
-        case PROP_RECURSIVE:
-        {
-            nautilus_query_set_recursive (self, g_value_get_enum (value));
-        }
-        break;
-
-        case PROP_SEARCH_TYPE:
-        {
-            nautilus_query_set_search_type (self, g_value_get_enum (value));
-        }
-        break;
-
-        case PROP_SEARCHING:
-        {
-            nautilus_query_set_searching (self, g_value_get_boolean (value));
-        }
-        break;
-
-        case PROP_SHOW_HIDDEN:
-        {
-            nautilus_query_set_show_hidden_files (self, g_value_get_boolean (value));
-        }
-        break;
-
-        case PROP_TEXT:
-        {
-            nautilus_query_set_text (self, g_value_get_string (value));
-        }
-        break;
-
-        default:
-        {
-            G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-        }
-    }
 }
 
 static void
@@ -222,118 +108,6 @@ nautilus_query_class_init (NautilusQueryClass *class)
 
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = finalize;
-    gobject_class->get_property = nautilus_query_get_property;
-    gobject_class->set_property = nautilus_query_set_property;
-
-    /**
-     * NautilusQuery::date-range:
-     *
-     * The date range of the query.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_DATE_RANGE,
-                                     g_param_spec_pointer ("date-range",
-                                                           "Date range of the query",
-                                                           "The range date of the query",
-                                                           G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::location:
-     *
-     * The location of the query.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_LOCATION,
-                                     g_param_spec_object ("location", NULL, NULL,
-                                                          G_TYPE_FILE,
-                                                          G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS));
-
-    /**
-     * NautilusQuery::mimetypes: (type GPtrArray) (element-type gchar*)
-     *
-     * MIME types the query holds. An empty array means "Any type".
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_MIMETYPES,
-                                     g_param_spec_pointer ("mimetypes",
-                                                           "MIME types of the query",
-                                                           "The MIME types of the query",
-                                                           G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::recursive:
-     *
-     * Whether the query is being performed on subdirectories or not.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_RECURSIVE,
-                                     g_param_spec_enum ("recursive",
-                                                        "Whether the query is being performed on subdirectories",
-                                                        "Whether the query is being performed on subdirectories or not",
-                                                        NAUTILUS_TYPE_QUERY_RECURSIVE,
-                                                        NAUTILUS_QUERY_RECURSIVE_ALWAYS,
-                                                        G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::search-type:
-     *
-     * The search type of the query.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SEARCH_TYPE,
-                                     g_param_spec_enum ("search-type",
-                                                        "Type of the query",
-                                                        "The type of the query",
-                                                        NAUTILUS_TYPE_QUERY_SEARCH_TYPE,
-                                                        NAUTILUS_QUERY_SEARCH_TYPE_LAST_MODIFIED,
-                                                        G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::searching:
-     *
-     * Whether the query is being performed or not.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SEARCHING,
-                                     g_param_spec_boolean ("searching",
-                                                           "Whether the query is being performed",
-                                                           "Whether the query is being performed or not",
-                                                           FALSE,
-                                                           G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::show-hidden:
-     *
-     * Whether the search should include hidden files.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SHOW_HIDDEN,
-                                     g_param_spec_boolean ("show-hidden",
-                                                           "Show hidden files",
-                                                           "Whether the search should show hidden files",
-                                                           FALSE,
-                                                           G_PARAM_READWRITE));
-
-    /**
-     * NautilusQuery::text:
-     *
-     * The search string.
-     *
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_TEXT,
-                                     g_param_spec_string ("text",
-                                                          "Text of the search",
-                                                          "The text string of the search",
-                                                          NULL,
-                                                          G_PARAM_READWRITE));
 }
 
 static void
@@ -342,8 +116,8 @@ nautilus_query_init (NautilusQuery *query)
     query->mime_types = g_ptr_array_new ();
     query->show_hidden = TRUE;
     query->search_type = g_settings_get_enum (nautilus_preferences, "search-filter-time-type");
-    query->search_content = NAUTILUS_QUERY_SEARCH_CONTENT_SIMPLE;
-    g_rw_lock_init (&query->prepared_words_rwlock);
+    nautilus_query_update_recursive_setting (query);
+    nautilus_query_update_search_content (query);
 }
 
 static gchar *
@@ -366,29 +140,27 @@ nautilus_query_matches_string (NautilusQuery *query,
     gchar *ptr = NULL;
     gboolean found = TRUE;
     gdouble retval;
-    gint idx, nonexact_malus = 0;
+    gint nonexact_malus = 0;
 
-    if (!query->text)
+    if (query->text == NULL)
     {
-        return -1;
+        return 0;
     }
 
     prepared_string = prepare_string_for_compare (string);
 
-    g_rw_lock_reader_lock (&query->prepared_words_rwlock);
-
-    for (idx = 0; query->prepared_words[idx] != NULL; idx++)
+    for (guint idx = 0; idx < query->prepared_words->len; idx++)
     {
-        if ((ptr = strstr (prepared_string, query->prepared_words[idx])) == NULL)
+        GString *word = query->prepared_words->pdata[idx];
+
+        if ((ptr = strstr (prepared_string, word->str)) == NULL)
         {
             found = FALSE;
             break;
         }
 
-        nonexact_malus += strlen (ptr) - strlen (query->prepared_words[idx]);
+        nonexact_malus += strlen (ptr) - word->len;
     }
-
-    g_rw_lock_reader_unlock (&query->prepared_words_rwlock);
 
     if (!found)
     {
@@ -411,6 +183,24 @@ nautilus_query_new (void)
     return g_object_new (NAUTILUS_TYPE_QUERY, NULL);
 }
 
+NautilusQuery *
+nautilus_query_copy (NautilusQuery *query)
+{
+    NautilusQuery *copy = g_object_new (NAUTILUS_TYPE_QUERY, NULL);
+    g_autoptr (GPtrArray) mime_types = nautilus_query_get_mime_types (query);
+
+    copy->text = nautilus_query_get_text (query);
+    copy->location = nautilus_query_get_location (query);
+    g_set_ptr_array (&copy->mime_types, mime_types);
+    copy->show_hidden = query->show_hidden;
+    copy->date_range = nautilus_query_get_date_range (query);
+    copy->recursion_tradeoff = query->recursion_tradeoff;
+    copy->search_type = query->search_type;
+    copy->search_content = query->search_content;
+    g_set_ptr_array (&copy->prepared_words, query->prepared_words);
+
+    return copy;
+}
 
 char *
 nautilus_query_get_text (NautilusQuery *query)
@@ -420,26 +210,41 @@ nautilus_query_get_text (NautilusQuery *query)
     return g_strdup (query->text);
 }
 
-void
+gboolean
 nautilus_query_set_text (NautilusQuery *query,
                          const char    *text)
 {
-    g_return_if_fail (NAUTILUS_IS_QUERY (query));
+    g_return_val_if_fail (NAUTILUS_IS_QUERY (query), FALSE);
 
-    g_free (query->text);
-    query->text = g_strstrip (g_strdup (text));
+    /* This is the only place that sets a query text.
+     * Treat empty strings as setting NULL. */
+    g_autofree gchar *stripped_text = g_strstrip (g_strdup (text));
+    const char *settable_text = (stripped_text == NULL || stripped_text[0] == '\0')
+                                ? NULL : stripped_text;
 
-    g_autofree gchar *prepared_query = prepare_string_for_compare (query->text);
-    GStrv prepared_words = g_strsplit (prepared_query, " ", -1);
+    if (!g_set_str (&query->text, settable_text))
+    {
+        return FALSE;
+    }
 
-    g_rw_lock_writer_lock (&query->prepared_words_rwlock);
+    g_autoptr (GPtrArray) prepared_words = NULL;
+    if (query->text != NULL)
+    {
+        g_autofree gchar *prepared_query = prepare_string_for_compare (query->text);
+        g_auto (GStrv) split_query = g_strsplit (prepared_query, " ", -1);
+        guint split_num = g_strv_length (split_query);
 
-    g_strfreev (query->prepared_words);
-    query->prepared_words = prepared_words;
+        prepared_words = g_ptr_array_new_full (split_num, (GDestroyNotify) prepared_word_free);
+        for (guint i = 0; i < split_num; i += 1)
+        {
+            GString *word = g_string_new (split_query[i]);
+            g_ptr_array_add (prepared_words, word);
+        }
+    }
 
-    g_rw_lock_writer_unlock (&query->prepared_words_rwlock);
+    g_set_ptr_array (&query->prepared_words, prepared_words);
 
-    g_object_notify (G_OBJECT (query), "text");
+    return TRUE;
 }
 
 GFile *
@@ -463,7 +268,8 @@ nautilus_query_set_location (NautilusQuery *query,
 
     if (g_set_object (&query->location, location))
     {
-        g_object_notify (G_OBJECT (query), "location");
+        nautilus_query_update_recursive_setting (query);
+        nautilus_query_update_search_content (query);
     }
 }
 
@@ -472,7 +278,7 @@ nautilus_query_set_location (NautilusQuery *query,
  * @query: A #NautilusQuery
  *
  * Retrieves the current MIME Types filter from @query. Its content must not be
- * modified. It can be read by multiple threads.
+ * modified.
  *
  * Returns: (transfer container) A #GPtrArray reference with MIME type name strings.
  */
@@ -503,10 +309,7 @@ nautilus_query_set_mime_types (NautilusQuery *query,
     g_return_if_fail (NAUTILUS_IS_QUERY (query));
     g_return_if_fail (mime_types != NULL);
 
-    g_clear_pointer (&query->mime_types, g_ptr_array_unref);
-    query->mime_types = g_ptr_array_ref (mime_types);
-
-    g_object_notify (G_OBJECT (query), "mimetypes");
+    g_set_ptr_array (&query->mime_types, mime_types);
 }
 
 gboolean
@@ -523,25 +326,10 @@ nautilus_query_set_show_hidden_files (NautilusQuery *query,
 {
     g_return_if_fail (NAUTILUS_IS_QUERY (query));
 
-    if (query->show_hidden != show_hidden)
-    {
-        query->show_hidden = show_hidden;
-        g_object_notify (G_OBJECT (query), "show-hidden");
-    }
+    query->show_hidden = show_hidden;
 }
 
-char *
-nautilus_query_to_readable_string (NautilusQuery *query)
-{
-    if (!query || !query->text || query->text[0] == '\0')
-    {
-        return g_strdup (_("Search"));
-    }
-
-    return g_strdup_printf (_("Search for “%s”"), query->text);
-}
-
-NautilusQuerySearchContent
+gboolean
 nautilus_query_get_search_content (NautilusQuery *query)
 {
     g_return_val_if_fail (NAUTILUS_IS_QUERY (query), -1);
@@ -549,20 +337,46 @@ nautilus_query_get_search_content (NautilusQuery *query)
     return query->search_content;
 }
 
-void
-nautilus_query_set_search_content (NautilusQuery              *query,
-                                   NautilusQuerySearchContent  content)
-{
-    g_return_if_fail (NAUTILUS_IS_QUERY (query));
 
-    if (query->search_content != content)
+/** Returns: whether full text search is available */
+gboolean
+nautilus_query_can_search_content (NautilusQuery *self)
+{
+    if (self->location == NULL)
     {
-        query->search_content = content;
-        g_object_notify (G_OBJECT (query), "search-type");
+        return TRUE;
+    }
+    else if (g_file_has_uri_scheme (self->location, SCHEME_NETWORK))
+    {
+        return FALSE;
+    }
+    else if (nautilus_query_recursive_local_only (self))
+    {
+        g_autoptr (NautilusFile) file = nautilus_file_get (self->location);
+        return !nautilus_file_is_remote (file);
+    }
+    else
+    {
+        return TRUE;
     }
 }
 
-NautilusQuerySearchType
+/**
+ * Returns: Whether the query has changed
+ */
+gboolean
+nautilus_query_update_search_content (NautilusQuery *self)
+{
+    gboolean old_search_content = self->search_content;
+
+    self->search_content = nautilus_query_can_search_content (self) &&
+                           g_settings_get_boolean (nautilus_preferences,
+                                                   NAUTILUS_PREFERENCES_FTS_ENABLED);
+
+    return old_search_content != self->search_content;
+}
+
+NautilusSearchTimeType
 nautilus_query_get_search_type (NautilusQuery *query)
 {
     g_return_val_if_fail (NAUTILUS_IS_QUERY (query), -1);
@@ -571,16 +385,12 @@ nautilus_query_get_search_type (NautilusQuery *query)
 }
 
 void
-nautilus_query_set_search_type (NautilusQuery           *query,
-                                NautilusQuerySearchType  type)
+nautilus_query_set_search_type (NautilusQuery          *query,
+                                NautilusSearchTimeType  type)
 {
     g_return_if_fail (NAUTILUS_IS_QUERY (query));
 
-    if (query->search_type != type)
-    {
-        query->search_type = type;
-        g_object_notify (G_OBJECT (query), "search-type");
-    }
+    query->search_type = type;
 }
 
 /**
@@ -588,25 +398,15 @@ nautilus_query_set_search_type (NautilusQuery           *query,
  * @query: a #NautilusQuery
  *
  * Retrieves the #GptrArray composed of #GDateTime representing the date range.
- * This function is thread safe.
  *
  * Returns: (transfer full): the #GptrArray composed of #GDateTime representing the date range.
  */
 GPtrArray *
 nautilus_query_get_date_range (NautilusQuery *query)
 {
-    static GMutex mutex;
-
     g_return_val_if_fail (NAUTILUS_IS_QUERY (query), NULL);
 
-    g_mutex_lock (&mutex);
-    if (query->date_range)
-    {
-        g_ptr_array_ref (query->date_range);
-    }
-    g_mutex_unlock (&mutex);
-
-    return query->date_range;
+    return query->date_range != NULL ? g_ptr_array_ref (query->date_range) : NULL;
 }
 
 void
@@ -620,55 +420,41 @@ nautilus_query_set_date_range (NautilusQuery *query,
     {
         query->date_range = g_ptr_array_ref (date_range);
     }
+}
 
-    g_object_notify (G_OBJECT (query), "date-range");
+/** Returns: whether recursive search is generally enabled */
+gboolean
+nautilus_query_recursive (NautilusQuery *self)
+{
+    return self->recursion_tradeoff != NAUTILUS_SPEED_TRADEOFF_NEVER;
+}
+
+/** Returns: whether recursive search is only enabled for local paths */
+gboolean
+nautilus_query_recursive_local_only (NautilusQuery *self)
+{
+    return self->recursion_tradeoff == NAUTILUS_SPEED_TRADEOFF_LOCAL_ONLY;
+}
+
+/**
+ * Returns: Whether the query has changed
+ */
+gboolean
+nautilus_query_update_recursive_setting (NautilusQuery *self)
+{
+    NautilusSpeedTradeoffValue old_tradeoff = self->recursion_tradeoff;
+
+    self->recursion_tradeoff = get_recursion_tradeoff (self->location);
+
+    return old_tradeoff != self->recursion_tradeoff;
 }
 
 gboolean
-nautilus_query_get_searching (NautilusQuery *query)
+nautilus_query_has_active_filter (NautilusQuery *self)
 {
-    g_return_val_if_fail (NAUTILUS_IS_QUERY (query), FALSE);
-
-    return query->searching;
-}
-
-void
-nautilus_query_set_searching (NautilusQuery *query,
-                              gboolean       searching)
-{
-    g_return_if_fail (NAUTILUS_IS_QUERY (query));
-
-    searching = !!searching;
-
-    if (query->searching != searching)
-    {
-        query->searching = searching;
-
-        g_object_notify (G_OBJECT (query), "searching");
-    }
-}
-
-NautilusQueryRecursive
-nautilus_query_get_recursive (NautilusQuery *query)
-{
-    g_return_val_if_fail (NAUTILUS_IS_QUERY (query),
-                          NAUTILUS_QUERY_RECURSIVE_ALWAYS);
-
-    return query->recursive;
-}
-
-void
-nautilus_query_set_recursive (NautilusQuery          *query,
-                              NautilusQueryRecursive  recursive)
-{
-    g_return_if_fail (NAUTILUS_IS_QUERY (query));
-
-    if (query->recursive != recursive)
-    {
-        query->recursive = recursive;
-
-        g_object_notify (G_OBJECT (query), "recursive");
-    }
+    return self->date_range != NULL ||
+           self->mime_types->len > 0 ||
+           !self->search_content;
 }
 
 gboolean
@@ -680,7 +466,7 @@ nautilus_query_is_empty (NautilusQuery *query)
     }
 
     if (!query->date_range &&
-        (!query->text || (query->text && query->text[0] == '\0')) &&
+        query->text == NULL &&
         query->mime_types->len == 0)
     {
         return TRUE;

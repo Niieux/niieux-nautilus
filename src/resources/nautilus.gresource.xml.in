@@ -6,6 +6,8 @@
     <file compressed="true">ui/nautilus-search-popover.ui</file>
     <file>ui/nautilus-search-types-dialog.ui</file>
     <file>ui/nautilus-app-chooser.ui</file>
+    <file>ui/nautilus-date-entry-row.ui</file>
+    <file>ui/nautilus-date-range-dialog.ui</file>
     <file>ui/nautilus-pathbar-context-menu.ui</file>
     <file>ui/nautilus-toolbar.ui</file>
     <file>ui/nautilus-history-controls.ui</file>
@@ -32,7 +34,7 @@
     <file>ui/nautilus-network-address-bar.ui</file>
     <file>ui/nautilus-network-cell.ui</file>
     <file>ui/nautilus-file-chooser.ui</file>
-    <file alias="gtk/ui/nautilusgtksidebarrow.ui">../gtk/nautilusgtksidebarrow.ui</file>
+    <file>ui/nautilus-sidebar-row.ui</file>
     <file alias="icons/filmholes.png">../../icons/filmholes.png</file>
     <file>style.css</file>
     <file>style-hc.css</file>
@@ -40,6 +42,8 @@
     <file>Checkerboard.png</file>
   </gresource>
   <gresource prefix="/org/gnome/nautilus/icons/scalable/actions/">
+    <file alias="arrow-next-symbolic.svg" preprocess="xml-stripblanks">icons/arrow-next-symbolic.svg</file>
+    <file alias="arrow-next-symbolic-rtl.svg" preprocess="xml-stripblanks">icons/arrow-next-symbolic-rtl.svg</file>
     <file alias="cancel-operation-symbolic.svg" preprocess="xml-stripblanks">icons/cancel-operation-symbolic.svg</file>
     <file alias="emblem-readonly-symbolic.svg" preprocess="xml-stripblanks">icons/emblem-readonly-symbolic.svg</file>
     <file alias="emblem-symbolic-link-symbolic.svg" preprocess="xml-stripblanks">icons/emblem-symbolic-link-symbolic.svg</file>
@@ -55,5 +59,10 @@
     <file alias="info-outline-symbolic.svg" preprocess="xml-stripblanks">icons/info-outline-symbolic.svg</file>
     <file alias="nautilus-file-chooser-options-symbolic.svg" preprocess="xml-stripblanks">icons/nautilus-file-chooser-options-symbolic.svg</file>
     <file alias="funnel-outline-symbolic.svg" preprocess="xml-stripblanks">icons/funnel-outline-symbolic.svg</file>
+    <file alias="cut-symbolic.svg" preprocess="xml-stripblanks">icons/cut-symbolic.svg</file>
+    <file alias="cut-large-symbolic.svg" preprocess="xml-stripblanks">icons/cut-large-symbolic.svg</file>
+    <file alias="image-print-symbolic.svg" preprocess="xml-stripblanks">icons/image-print-symbolic.svg</file>
+    <file alias="paper-symbolic.svg" preprocess="xml-stripblanks">icons/paper-symbolic.svg</file>
+    <file alias="rich-text-symbolic.svg" preprocess="xml-stripblanks">icons/rich-text-symbolic.svg</file>
   </gresource>
 </gresources>

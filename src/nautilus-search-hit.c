@@ -24,7 +24,6 @@
 #include <gio/gio.h>
 
 #include "nautilus-search-hit.h"
-#include "nautilus-query.h"
 
 struct _NautilusSearchHit
 {
@@ -58,10 +57,8 @@ G_DEFINE_TYPE (NautilusSearchHit, nautilus_search_hit, G_TYPE_OBJECT)
 void
 nautilus_search_hit_compute_scores (NautilusSearchHit *hit,
                                     GDateTime         *now,
-                                    NautilusQuery     *query)
+                                    GFile             *query_location)
 {
-    g_autoptr (GFile) query_location = NULL;
-    GFile *hit_location;
     guint dir_count = 0;
     GTimeSpan m_diff = G_MAXINT64;
     GTimeSpan a_diff = G_MAXINT64;
@@ -70,31 +67,24 @@ nautilus_search_hit_compute_scores (NautilusSearchHit *hit,
     gdouble proximity_bonus = 0.0;
     gdouble match_bonus = 0.0;
 
-    query_location = nautilus_query_get_location (query);
-    hit_location = g_file_new_for_uri (hit->uri);
-
-    if (query_location != NULL &&
-        g_file_has_prefix (hit_location, query_location))
+    if (query_location != NULL)
     {
-        GFile *parent, *location;
+        g_autoptr (GFile) hit_location = g_file_new_for_uri (hit->uri);
+        g_autofree gchar *relative_path = g_file_get_relative_path (query_location, hit_location);
 
-        parent = g_file_get_parent (hit_location);
-
-        while (!g_file_equal (parent, query_location))
+        for (gchar *c = relative_path; c != NULL && *c != '\0'; c++)
         {
-            dir_count++;
-            location = parent;
-            parent = g_file_get_parent (location);
-            g_object_unref (location);
+            if (*c == G_DIR_SEPARATOR)
+            {
+                dir_count++;
+            }
         }
-        g_object_unref (parent);
 
         if (dir_count < 10)
         {
             proximity_bonus = 10000.0 - 1000.0 * dir_count;
         }
     }
-    g_object_unref (hit_location);
 
     /* Recency bonus is useful for recursive search, but unwanted for results
      * from the current folder, which should always sort by filename match,
@@ -148,8 +138,12 @@ nautilus_search_hit_compute_scores (NautilusSearchHit *hit,
     }
 
     hit->relevance = recent_bonus + proximity_bonus + match_bonus;
-    g_debug ("Hit %s computed relevance %.2f (%.2f + %.2f + %.2f)", hit->uri, hit->relevance,
-             proximity_bonus, recent_bonus, match_bonus);
+
+    if (g_getenv ("G_MESSAGES_DEBUG") != NULL)
+    {
+        g_debug ("Hit %s computed relevance %.2f (%.2f + %.2f + %.2f)",
+                 hit->uri, hit->relevance, proximity_bonus, recent_bonus, match_bonus);
+    }
 }
 
 const char *
@@ -426,7 +420,7 @@ nautilus_search_hit_class_init (NautilusSearchHitClass *class)
     g_object_class_install_property (object_class,
                                      PROP_ACCESS_TIME,
                                      g_param_spec_boxed ("access-time",
-                                                         "acess time",
+                                                         "access time",
                                                          "access time",
                                                          G_TYPE_DATE_TIME,
                                                          G_PARAM_READWRITE | G_PARAM_CONSTRUCT));

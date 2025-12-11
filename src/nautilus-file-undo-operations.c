@@ -1201,11 +1201,10 @@ batch_rename_redo_func (NautilusFileUndoInfo           *info,
 {
     NautilusFileUndoInfoBatchRename *self = NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (info);
 
-    GList *l, *files;
+    GList *l;
+    g_autolist (NautilusFile) files = NULL;
     NautilusFile *file;
     GFile *old_file;
-
-    files = NULL;
 
     for (l = self->old_files; l != NULL; l = l->next)
     {
@@ -1234,11 +1233,10 @@ batch_rename_undo_func (NautilusFileUndoInfo           *info,
 {
     NautilusFileUndoInfoBatchRename *self = NAUTILUS_FILE_UNDO_INFO_BATCH_RENAME (info);
 
-    GList *l, *files;
+    GList *l;
+    g_autolist (NautilusFile) files = NULL;
     NautilusFile *file;
     GFile *new_file;
-
-    files = NULL;
 
     for (l = self->new_files; l != NULL; l = l->next)
     {
@@ -1463,6 +1461,7 @@ starred_redo_func (NautilusFileUndoInfo           *info,
                                          G_OBJECT (info),
                                          self->files,
                                          on_undo_starred_tags_updated,
+                                         NULL,
                                          NULL);
     }
     else
@@ -1471,6 +1470,7 @@ starred_redo_func (NautilusFileUndoInfo           *info,
                                            G_OBJECT (info),
                                            self->files,
                                            on_undo_starred_tags_updated,
+                                           NULL,
                                            NULL);
     }
 }
@@ -1488,6 +1488,7 @@ starred_undo_func (NautilusFileUndoInfo           *info,
                                            G_OBJECT (info),
                                            self->files,
                                            on_undo_starred_tags_updated,
+                                           NULL,
                                            NULL);
     }
     else
@@ -1496,6 +1497,7 @@ starred_undo_func (NautilusFileUndoInfo           *info,
                                          G_OBJECT (info),
                                          self->files,
                                          on_undo_starred_tags_updated,
+                                         NULL,
                                          NULL);
     }
 }
@@ -1750,7 +1752,8 @@ trash_retrieve_files_to_restore_thread (GTask        *task,
         const char *origpath;
         GFile *origfile;
 
-        while ((info = g_file_enumerator_next_file (enumerator, NULL, &error)) != NULL)
+        while (g_file_enumerator_iterate (enumerator, &info, NULL, NULL, &error) &&
+               info != NULL)
         {
             /* Retrieve the original file uri */
             origpath = g_file_info_get_attribute_byte_string (info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH);

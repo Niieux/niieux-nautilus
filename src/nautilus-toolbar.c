@@ -33,6 +33,7 @@
 #include "nautilus-pathbar.h"
 #include "nautilus-view-controls.h"
 #include "nautilus-ui-utilities.h"
+#include "nautilus-window-slot.h"
 
 struct _NautilusToolbar
 {
@@ -177,7 +178,7 @@ on_path_bar_open_location (NautilusPathBar   *path_bar,
     }
     else
     {
-        nautilus_window_slot_open_location_full (self->window_slot, location, open_flags, NULL);
+        nautilus_window_slot_open_location_full (self->window_slot, location, NULL);
     }
 }
 
@@ -217,7 +218,7 @@ on_location_entry_location_changed (NautilusLocationEntry *entry,
     NautilusToolbar *self = NAUTILUS_TOOLBAR (user_data);
 
     nautilus_toolbar_close_location_entry (self);
-    nautilus_window_slot_open_location_full (self->window_slot, location, 0, NULL);
+    nautilus_window_slot_open_location_full (self->window_slot, location, NULL);
 }
 
 static void
@@ -247,7 +248,7 @@ action_prompt_home_location (GtkWidget  *widget,
 {
     NautilusToolbar *self = NAUTILUS_TOOLBAR (widget);
 
-    nautilus_toolbar_open_location_entry (self, "~");
+    nautilus_toolbar_open_location_entry (self, "~/");
 }
 
 static void
@@ -469,7 +470,7 @@ nautilus_toolbar_class_init (NautilusToolbarClass *klass)
     properties [PROP_WINDOW_SLOT] =
         g_param_spec_object ("window-slot",
                              "Window slot currently active",
-                             "Window slot currently acive",
+                             "Window slot currently active",
                              NAUTILUS_TYPE_WINDOW_SLOT,
                              (G_PARAM_READWRITE |
                               G_PARAM_STATIC_STRINGS));

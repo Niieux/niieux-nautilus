@@ -17,9 +17,9 @@
 
 #pragma once
 
+#include "nautilus-types.h"
+
 #include <glib-object.h>
-#include "nautilus-query.h"
-#include "nautilus-search-hit.h"
 
 G_BEGIN_DECLS
 
@@ -27,14 +27,6 @@ typedef enum {
   NAUTILUS_SEARCH_PROVIDER_STATUS_NORMAL,
   NAUTILUS_SEARCH_PROVIDER_STATUS_RESTARTING
 } NautilusSearchProviderStatus;
-
-typedef enum {
-  NAUTILUS_SEARCH_ENGINE_ALL_ENGINES,
-  NAUTILUS_SEARCH_ENGINE_TRACKER_ENGINE,
-  NAUTILUS_SEARCH_ENGINE_RECENT_ENGINE,
-  NAUTILUS_SEARCH_ENGINE_MODEL_ENGINE,
-  NAUTILUS_SEARCH_ENGINE_SIMPLE_ENGINE,
-} NautilusSearchEngineTarget;
 
 #define NAUTILUS_TYPE_SEARCH_PROVIDER (nautilus_search_provider_get_type ())
 
@@ -44,12 +36,21 @@ struct _NautilusSearchProviderInterface {
         GTypeInterface g_iface;
 
         /* VTable */
-        void (*set_query) (NautilusSearchProvider *provider, NautilusQuery *query);
-        void (*start) (NautilusSearchProvider *provider);
+        /**
+         * Returns: Whether search provider was started
+         */
+        gboolean (*start) (NautilusSearchProvider *provider,
+                           NautilusQuery          *query);
         void (*stop) (NautilusSearchProvider *provider);
 
         /* Signals */
-        void (*hits_added) (NautilusSearchProvider *provider, GList *hits);
+        /**
+         * @provider: search provider
+         * @hits: (transfer full): list of #NautilusSearchHit
+         *
+         * Provider emits this signal when adding search hits
+         */
+        void (*hits_added) (NautilusSearchProvider *provider, GPtrArray *hits);
         /* This signal has a status parameter because it's necesary to discern
          * when the search engine finished normally or wheter it finished in a
          * different situation that will cause the engine to do some action after
@@ -78,24 +79,20 @@ struct _NautilusSearchProviderInterface {
         void (*finished) (NautilusSearchProvider       *provider,
                           NautilusSearchProviderStatus  status);
         void (*error) (NautilusSearchProvider *provider, const char *error_message);
-        gboolean (*is_running) (NautilusSearchProvider *provider);
 };
 
 GType          nautilus_search_provider_get_type        (void) G_GNUC_CONST;
 
 /* Interface Functions */
-void           nautilus_search_provider_set_query       (NautilusSearchProvider *provider,
+gboolean       nautilus_search_provider_start           (NautilusSearchProvider *provider,
                                                          NautilusQuery *query);
-void           nautilus_search_provider_start           (NautilusSearchProvider *provider);
 void           nautilus_search_provider_stop            (NautilusSearchProvider *provider);
 
 void           nautilus_search_provider_hits_added      (NautilusSearchProvider *provider,
-                                                         GList *hits);
+                                                         GPtrArray              *hits);
 void           nautilus_search_provider_finished        (NautilusSearchProvider       *provider,
                                                          NautilusSearchProviderStatus  status);
 void           nautilus_search_provider_error           (NautilusSearchProvider *provider,
                                                          const char *error_message);
-
-gboolean       nautilus_search_provider_is_running      (NautilusSearchProvider *provider);
 
 G_END_DECLS

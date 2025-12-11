@@ -65,9 +65,8 @@ void             nautilus_window_close                (NautilusWindow    *window
 void nautilus_window_open_location_full               (NautilusWindow     *window,
                                                        GFile              *location,
                                                        NautilusOpenFlags   flags,
-                                                       GList              *selection,
-                                                       NautilusWindowSlot *target_slot,
-                                                       const char         *startup_id);
+                                                       NautilusFileList   *selection,
+                                                       NautilusWindowSlot *target_slot);
 
 void             nautilus_window_new_tab              (NautilusWindow    *window);
 NautilusWindowSlot * nautilus_window_get_active_slot       (NautilusWindow *window);
@@ -86,13 +85,6 @@ void nautilus_window_show_operation_notification (NautilusWindow *window,
 
 void nautilus_window_search (NautilusWindow *window,
                              NautilusQuery  *query);
-
-void nautilus_window_open_location_in_split_view (NautilusWindow *window,
-                                                  GFile          *location);
-
-void nautilus_window_initialize_slot (NautilusWindow     *window,
-                                      NautilusWindowSlot *slot,
-                                      NautilusOpenFlags   flags);
 
 void nautilus_window_back_or_forward_in_new_tab (NautilusWindow              *window,
                                                  NautilusNavigationDirection  back);

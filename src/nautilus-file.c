@@ -189,6 +189,7 @@ enum
     PROP_0,
     PROP_DIRECTORY,
     PROP_DISPLAY_NAME,
+    PROP_A11Y_NAME,
     N_PROPS
 };
 
@@ -285,6 +286,7 @@ nautilus_file_set_display_name (NautilusFile *file,
         file->details->display_name_collation_key = g_utf8_collate_key_for_filename (display_name, -1);
 
         g_object_notify_by_pspec (G_OBJECT (file), properties[PROP_DISPLAY_NAME]);
+        g_object_notify_by_pspec (G_OBJECT (file), properties[PROP_A11Y_NAME]);
     }
 
     if (g_strcmp0 (file->details->edit_name, edit_name) != 0)
@@ -856,22 +858,29 @@ nautilus_file_is_self_owned (NautilusFile *file)
 }
 
 static void
+nautilus_file_dispose (GObject *object)
+{
+    NautilusFile *file = NAUTILUS_FILE (object);
+
+    if (file->details->is_thumbnailing)
+    {
+        g_autofree gchar *uri = nautilus_file_get_uri (file);
+
+        nautilus_thumbnail_remove_from_queue (uri);
+    }
+
+    G_OBJECT_CLASS (nautilus_file_parent_class)->dispose (object);
+}
+
+static void
 finalize (GObject *object)
 {
     NautilusDirectory *directory;
     NautilusFile *file;
-    char *uri;
 
     file = NAUTILUS_FILE (object);
 
     g_assert (file->details->operations_in_progress == NULL);
-
-    if (file->details->is_thumbnailing)
-    {
-        uri = nautilus_file_get_uri (file);
-        nautilus_thumbnail_remove_from_queue (uri);
-        g_free (uri);
-    }
 
     nautilus_async_destroying_file (file);
 
@@ -914,7 +923,6 @@ finalize (GObject *object)
     g_clear_pointer (&file->details->group, g_ref_string_release);
     g_free (file->details->selinux_context);
     g_free (file->details->activation_uri);
-    g_clear_object (&file->details->custom_icon);
 
     if (file->details->thumbnail)
     {
@@ -1782,7 +1790,7 @@ rename_get_info_callback (GObject      *source_object,
 {
     NautilusFileOperation *op;
     NautilusDirectory *directory;
-    NautilusFile *existing_file;
+    g_autoptr (NautilusFile) existing_file = NULL;
     char *old_uri;
     char *new_uri;
     const char *new_name;
@@ -1807,10 +1815,15 @@ rename_get_info_callback (GObject      *source_object,
          * renaming, mark it gone.
          */
         existing_file = nautilus_directory_find_file_by_name (directory, new_name);
-        if (existing_file != NULL && existing_file != op->file)
+        if (existing_file != NULL)
         {
-            nautilus_file_mark_gone (existing_file);
-            nautilus_file_changed (existing_file);
+            g_object_ref (existing_file);
+
+            if (existing_file != op->file)
+            {
+                nautilus_file_mark_gone (existing_file);
+                nautilus_file_changed (existing_file);
+            }
         }
 
         old_location = nautilus_file_get_location (op->file);
@@ -1843,13 +1856,10 @@ rename_callback (GObject      *source_object,
                  GAsyncResult *res,
                  gpointer      callback_data)
 {
-    NautilusFileOperation *op;
-    GFile *new_file;
-    GError *error;
+    NautilusFileOperation *op = callback_data;
+    g_autoptr (GFile) new_file = NULL;
+    g_autoptr (GError) error = NULL;
 
-    op = callback_data;
-
-    error = NULL;
     new_file = g_file_set_display_name_finish (G_FILE (source_object),
                                                res, &error);
 
@@ -1870,7 +1880,6 @@ rename_callback (GObject      *source_object,
     else
     {
         nautilus_file_operation_complete (op, NULL, error);
-        g_error_free (error);
     }
 }
 
@@ -2128,7 +2137,7 @@ real_batch_rename (GList                         *files,
     op->renamed_files = 0;
     op->skipped_files = 0;
 
-    for (l1 = files->next; l1 != NULL; l1 = l1->next)
+    for (l1 = files; l1 != NULL; l1 = l1->next)
     {
         file = NAUTILUS_FILE (l1->data);
 
@@ -2146,8 +2155,7 @@ real_batch_rename (GList                         *files,
 
         new_file_name = nautilus_file_can_rename_file (file,
                                                        new_name->str,
-                                                       callback,
-                                                       callback_data);
+                                                       NULL, NULL);
 
         if (new_file_name == NULL)
         {
@@ -2439,6 +2447,13 @@ update_info_internal (NautilusFile *file,
         changed = TRUE;
     }
     file->details->type = file_type;
+
+    if (!nautilus_file_is_directory (file))
+    {
+        file->details->directory_count_is_up_to_date = TRUE;
+        file->details->directory_count_failed = FALSE;
+        file->details->got_directory_count = FALSE;
+    }
 
     if (g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_STANDARD_IS_VIRTUAL) ||
         file_type == G_FILE_TYPE_SHORTCUT ||
@@ -2871,6 +2886,12 @@ nautilus_file_update_thumbnail_info (NautilusFile *file,
                                      GFileInfo    *info)
 {
     gboolean changed = FALSE;
+
+    if (!file->details->thumbnail_info_is_up_to_date)
+    {
+        file->details->thumbnail_info_is_up_to_date = TRUE;
+        changed = TRUE;
+    }
 
     const gchar *thumbnail_path = g_file_info_get_attribute_byte_string (info,
                                                                          G_FILE_ATTRIBUTE_THUMBNAIL_PATH);
@@ -3319,18 +3340,19 @@ prepend_automatic_keywords (NautilusFile *file,
                             GList        *names)
 {
     /* Prepend in reverse order. */
-    NautilusFile *parent;
-
-    parent = nautilus_file_get_parent (file);
 
     /* Trash files are assumed to be read-only,
      * so we want to ignore them here. */
     if (!nautilus_file_can_write (file) &&
-        !nautilus_file_is_in_trash (file) &&
-        (parent == NULL || nautilus_file_can_write (parent)))
+        !nautilus_file_is_in_trash (file))
     {
-        names = g_list_prepend
-                    (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_CANT_WRITE));
+        g_autoptr (NautilusFile) parent = nautilus_file_get_parent (file);
+
+        if (parent == NULL || nautilus_file_can_write (parent))
+        {
+            names = g_list_prepend
+                        (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_CANT_WRITE));
+        }
     }
     if (!nautilus_file_can_read (file))
     {
@@ -3342,12 +3364,6 @@ prepend_automatic_keywords (NautilusFile *file,
         names = g_list_prepend
                     (names, g_strdup (NAUTILUS_FILE_EMBLEM_NAME_SYMBOLIC_LINK));
     }
-
-    if (parent)
-    {
-        nautilus_file_unref (parent);
-    }
-
 
     return names;
 }
@@ -3936,7 +3952,9 @@ nautilus_file_should_show (NautilusFile *file,
         return TRUE;
     }
 
-    if (!show_hidden && nautilus_file_is_hidden_file (file))
+    if (!show_hidden &&
+        file->details->file_info_is_up_to_date &&
+        nautilus_file_is_hidden_file (file))
     {
         return FALSE;
     }
@@ -4487,6 +4505,17 @@ get_filesystem_remote (NautilusFile *file,
     }
     else
     {
+        g_autoptr (GFile) location = nautilus_file_get_location (file);
+        /* Should be Okay to use a blocking call if a mount monitor exists. */
+        g_autoptr (GFileInfo) info = g_file_query_filesystem_info (location,
+                                                                   G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE,
+                                                                   NULL, NULL);
+
+        if (info != NULL)
+        {
+            return g_file_info_get_attribute_boolean (info, G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
+        }
+
         return FALSE;
     }
 }
@@ -4560,11 +4589,37 @@ nautilus_file_should_show_thumbnail (NautilusFile *file)
     return get_speed_tradeoff_preference_for_file (file, show_file_thumbs);
 }
 
+static GHashTable *video_mime_types_hash;
+
+static void
+ensure_video_types_hash (void)
+{
+    if (G_LIKELY (video_mime_types_hash != NULL))
+    {
+        return;
+    }
+
+    GList *mime_types = g_content_types_get_registered ();
+    video_mime_types_hash = g_hash_table_new (g_str_hash, g_str_equal);
+
+    for (GList *l = mime_types; l != NULL; l = l->next)
+    {
+        for (uint i = 0; video_mime_types[i] != NULL; i++)
+        {
+            if (g_content_type_equals (video_mime_types[i], l->data))
+            {
+                g_hash_table_add (video_mime_types_hash, (gpointer) video_mime_types[i]);
+            }
+        }
+    }
+
+    g_list_free_full (mime_types, g_free);
+}
+
 static gboolean
 nautilus_is_video_file (NautilusFile *file)
 {
     const char *mime_type;
-    guint i;
 
     mime_type = file->details->mime_type;
     if (mime_type == NULL)
@@ -4572,15 +4627,9 @@ nautilus_is_video_file (NautilusFile *file)
         return FALSE;
     }
 
-    for (i = 0; video_mime_types[i] != NULL; i++)
-    {
-        if (g_content_type_equals (video_mime_types[i], mime_type))
-        {
-            return TRUE;
-        }
-    }
+    ensure_video_types_hash ();
 
-    return FALSE;
+    return g_hash_table_contains (video_mime_types_hash, mime_type);
 }
 
 void
@@ -4793,12 +4842,12 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
         g_autoptr (GtkSnapshot) snapshot = gtk_snapshot_new ();
         GskRoundedRect rounded_rect;
 
-        if (MAX (width, height) > size)
+        if (MAX (width, height) != size)
         {
-            float scale_down_factor = MAX (width, height) / size;
+            double scale_factor = size / MAX (width, height);
 
-            width = width / scale_down_factor;
-            height = height / scale_down_factor;
+            width = round (width * scale_factor);
+            height = round (height * scale_factor);
         }
 
         gsk_rounded_rect_init_from_rect (&rounded_rect,
@@ -4818,8 +4867,12 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
 
         gtk_snapshot_pop (snapshot); /* End rounded clip */
 
-        g_debug ("Returning thumbnailed image, at size %d %d",
-                 (int) (width), (int) (height));
+        if (g_getenv ("G_MESSAGES_DEBUG") != NULL)
+        {
+            g_debug ("Returning thumbnailed image, at size %d %d",
+                     (int) (width), (int) (height));
+        }
+
         paintable = gtk_snapshot_to_paintable (snapshot, NULL);
     }
     else if (file->details->thumbnail_info_is_up_to_date &&
@@ -4834,7 +4887,7 @@ nautilus_file_get_thumbnail_icon (NautilusFile          *file,
 
     if (paintable != NULL)
     {
-        icon = nautilus_icon_info_new_for_paintable (paintable, scale);
+        icon = nautilus_icon_info_new_for_paintable (paintable);
     }
     else if (file->details->is_thumbnailing ||
              (nautilus_file_check_if_ready (file, NAUTILUS_FILE_ATTRIBUTE_THUMBNAIL_INFO) &&
@@ -4872,7 +4925,10 @@ nautilus_file_get_icon (NautilusFile          *file,
         goto out;
     }
 
-    g_debug ("Called file_get_icon(), at size %d", size);
+    if (g_getenv ("G_MESSAGES_DEBUG") != NULL)
+    {
+        g_debug ("Called file_get_icon(), at size %d", size);
+    }
 
     if (flags & NAUTILUS_FILE_ICON_FLAGS_USE_THUMBNAILS &&
         size >= NAUTILUS_THUMBNAIL_MINIMUM_ICON_SIZE &&
@@ -5458,6 +5514,8 @@ nautilus_file_set_permissions (NautilusFile                  *file,
                                                              file->details->permissions,
                                                              new_permissions);
         nautilus_file_undo_manager_set_action (undo_info);
+
+        g_object_unref (undo_info);
     }
 
     info = g_file_info_new ();
@@ -6850,6 +6908,19 @@ nautilus_file_is_date_sort_attribute_q (GQuark attribute_q)
     return FALSE;
 }
 
+gboolean
+nautilus_file_attribute_slow_sort (const gchar *sort_attribute)
+{
+    GQuark attribute_q = g_quark_from_string (sort_attribute);
+
+    return attribute_q == attribute_size_q ||
+           attribute_q == attribute_size_detail_q ||
+           attribute_q == attribute_deep_size_q ||
+           attribute_q == attribute_deep_file_count_q ||
+           attribute_q == attribute_deep_directory_count_q ||
+           attribute_q == attribute_deep_total_count_q;
+}
+
 struct
 {
     const char *icon_name;
@@ -7625,8 +7696,6 @@ nautilus_file_mark_gone (NautilusFile *file)
 void
 nautilus_file_changed (NautilusFile *file)
 {
-    GList fake_list;
-
     g_return_if_fail (NAUTILUS_IS_FILE (file));
 
     if (nautilus_file_is_self_owned (file))
@@ -7635,11 +7704,8 @@ nautilus_file_changed (NautilusFile *file)
     }
     else
     {
-        fake_list.data = file;
-        fake_list.next = NULL;
-        fake_list.prev = NULL;
-        nautilus_directory_emit_change_signals
-            (file->details->directory, &fake_list);
+        nautilus_directory_emit_change_signals (file->details->directory,
+                                                &(NautilusFileList){ .data = file });
     }
 }
 
@@ -8567,6 +8633,28 @@ nautilus_file_get_property (GObject    *object,
         }
         break;
 
+        case PROP_A11Y_NAME:
+        {
+            NautilusTagManager *tag_manager = nautilus_tag_manager_get ();
+            g_autofree gchar *uri = nautilus_file_get_uri (file);
+
+            if (nautilus_tag_manager_file_is_starred (tag_manager, uri))
+            {
+                g_autofree gchar *accessible_name = g_strdup_printf (
+                    /* Translators: A "." is added in between file name and starring
+                     * action description as a useful pause in the screen reader
+                     * announcement. */
+                    _("%s. Starred"),
+                    file->details->display_name);
+                g_value_set_string (value, accessible_name);
+            }
+            else
+            {
+                g_value_set_string (value, file->details->display_name);
+            }
+        }
+        break;
+
         default:
         {
             G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -8643,6 +8731,7 @@ nautilus_file_class_init (NautilusFileClass *class)
     attribute_free_space_q = g_quark_from_static_string ("free_space");
     attribute_starred_q = g_quark_from_static_string ("starred");
 
+    G_OBJECT_CLASS (class)->dispose = nautilus_file_dispose;
     G_OBJECT_CLASS (class)->finalize = finalize;
     G_OBJECT_CLASS (class)->constructor = nautilus_file_constructor;
     G_OBJECT_CLASS (class)->get_property = nautilus_file_get_property;
@@ -8709,6 +8798,9 @@ nautilus_file_class_init (NautilusFileClass *class)
     properties[PROP_DISPLAY_NAME] = g_param_spec_string ("display-name", NULL, NULL,
                                                          "",
                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+    properties[PROP_A11Y_NAME] = g_param_spec_string ("a11y-name", NULL, NULL,
+                                                      "",
+                                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
     g_object_class_install_properties (G_OBJECT_CLASS (class), N_PROPS, properties);
 }
 
