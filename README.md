@@ -1,4 +1,4 @@
-# niieux-nautilus
+# Nautilus for Niieux
 
 The customized file manager for [Niieux GNU/Linux](https://niieux.com/) (Still under development), based on GNOME Files (Nautilus).
 
